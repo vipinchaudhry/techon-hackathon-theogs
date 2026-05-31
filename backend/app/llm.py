@@ -239,16 +239,21 @@ def analyze_idea(idea: str, history: list[str] | None = None) -> dict:
         "description. Use this exact shape:\n"
         '  {"status":"blocked","reason":"<one polite sentence>"}\n\n'
         "HARD REQUIREMENTS:\n"
+        "The USER INPUT is the whole conversation so far, one message per line. A field "
+        "may have been given in ANY earlier line. Carry forward everything already said; "
+        "never drop a value the client gave in an earlier message.\n"
         "Collect these four fields, ONLY from what the client actually said (never "
         "invent or guess values):\n"
         "  name (short string), goal (what the project does, string), "
         "budget_eur (number, EUR), time_weeks (number).\n"
         "Keep asking, one field at a time, until you are confident you have all four. "
-        "While any is missing, respond with this shape:\n"
+        "Use needs_input ONLY when at least one field is still missing, and list the "
+        "missing field(s) in \"missing\". Never ask for confirmation. Shape:\n"
         '  {"status":"needs_input","collected":{"name":..,"goal":..,"budget_eur":..,'
         '"time_weeks":..},"missing":["field"],"question":"<polite ask for ONE field>"}\n\n'
         "ASSESSMENT:\n"
-        "Only once all four are present, assess Affordable Loss across five dimensions "
+        "As soon as all four fields are present (none null), you MUST go straight to the "
+        "assessment below. Do not ask to confirm. Assess Affordable Loss across five dimensions "
         "(time, money, reputation, relationships, reversibility) and respond with:\n"
         '  {"status":"ready","collected":{...},"dimensions":{"time":{"tier":"Low|Medium|'
         'High|Critical","note":"short"},"money":{...},"reputation":{...},'
@@ -267,6 +272,25 @@ def analyze_idea(idea: str, history: list[str] | None = None) -> dict:
             max_tokens=480,
         )
         out = _extract_json(raw)
+        # Safety net: model collected everything but stalled on a confirmation turn.
+        # Force the assessment instead of looping forever.
+        if out.get("status") == "needs_input" and not out.get("missing"):
+            collected = out.get("collected") or {}
+            if all(collected.get(f) not in (None, "") for f in REQUIRED_FIELDS):
+                forced = _call(
+                    [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": instruction},
+                        {"role": "assistant", "content": json.dumps(out)},
+                        {"role": "user", "content":
+                            "All four fields are present. Do not ask for confirmation. "
+                            "Return the final assessment now as the ready JSON object."},
+                    ],
+                    max_tokens=480,
+                )
+                forced_out = _extract_json(forced)
+                if forced_out.get("status") == "ready":
+                    return forced_out
         if out.get("status") in ("blocked", "needs_input", "ready"):
             return out
         return _mock_analyze(transcript)
