@@ -38,6 +38,10 @@ export const api = {
   ask: (message, project_id) =>
     req("/ask", { method: "POST", body: JSON.stringify({ message, project_id }) }),
 
+  chatHistory: (project_id) => req(`/projects/${project_id}/chat`),
+  clearChat: (project_id) =>
+    req(`/projects/${project_id}/chat`, { method: "DELETE" }),
+
   analyze: (idea, history = []) =>
     req("/analyze", { method: "POST", body: JSON.stringify({ idea, history }) }),
 

@@ -584,6 +584,22 @@ function AskPanel({ projectId }) {
   const [log, setLog] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  // Load the saved conversation when the panel mounts (survives refresh/navigation).
+  useEffect(() => {
+    let alive = true;
+    api
+      .chatHistory(Number(projectId))
+      .then((msgs) => {
+        if (alive) setLog(msgs.map((m) => ({ who: m.role, text: m.text })));
+      })
+      .catch(() => {})
+      .finally(() => alive && setLoaded(true));
+    return () => {
+      alive = false;
+    };
+  }, [projectId]);
 
   async function send() {
     if (!text.trim()) return;
@@ -603,16 +619,30 @@ function AskPanel({ projectId }) {
     }
   }
 
+  async function clear() {
+    await api.clearChat(Number(projectId)).catch(() => {});
+    setLog([]);
+  }
+
   return (
     <div className="card" style={{ marginTop: 16 }}>
-      <div className="row" style={{ marginBottom: 6 }}>
-        <div className="chip coral"><IconTarget /></div>
-        <h3 style={{ margin: 0 }}>Ask about this portfolio</h3>
+      <div className="spread" style={{ marginBottom: 6 }}>
+        <div className="row">
+          <div className="chip coral"><IconTarget /></div>
+          <h3 style={{ margin: 0 }}>Ask about this portfolio</h3>
+        </div>
+        {log.length > 0 && (
+          <button className="secondary" onClick={clear}>Clear history</button>
+        )}
       </div>
       <p className="small muted">
         The AI sees every project here. Try: "which losing projects should we keep?"
+        Your conversation is saved.
       </p>
       <div className="chat-log">
+        {loaded && log.length === 0 && (
+          <p className="small muted" style={{ margin: "4px 0" }}>No messages yet.</p>
+        )}
         {log.map((m, i) => <div key={i} className={`bubble ${m.who}`}>{m.text}</div>)}
       </div>
       <div className="row">

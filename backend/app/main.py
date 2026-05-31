@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from . import config, llm, schemas, seed, status_engine, store
 from .db import Base, SessionLocal, engine, get_db
-from .models import AuditLog, Project
+from .models import AuditLog, ChatMessage, Project
 
 # Project fields the navigator (or a manual edit) may change.
 EDITABLE_FIELDS = (
@@ -346,7 +346,41 @@ def ask(body: schemas.ChatIn, db: Session = Depends(get_db)) -> dict:
 
     answer = llm.answer_with_context(body.message, context)
     drift = llm.detect_drift(body.message)
+
+    # Persist both turns so the conversation survives refreshes / navigation.
+    bot_text = answer
+    if drift.get("drift"):
+        bot_text += "\n\nHeads up, that leans on ROI thinking: " + drift.get("reason", "")
+    db.add(ChatMessage(project_id=parent.id, role="user", text=body.message))
+    db.add(ChatMessage(project_id=parent.id, role="bot", text=bot_text))
+    db.commit()
+
     return {"answer": answer, "drift": drift, "mock_mode": config.LLM_MOCK}
+
+
+@app.get("/projects/{project_id}/chat")
+def get_chat(project_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """The saved 'Ask about this portfolio' history for a project, oldest first."""
+    _get_project(db, project_id)
+    msgs = db.scalars(
+        select(ChatMessage)
+        .where(ChatMessage.project_id == project_id)
+        .order_by(ChatMessage.id)
+    ).all()
+    return [{"id": m.id, "role": m.role, "text": m.text,
+             "timestamp": m.timestamp.isoformat()} for m in msgs]
+
+
+@app.delete("/projects/{project_id}/chat")
+def clear_chat(project_id: int, db: Session = Depends(get_db)) -> dict:
+    """Clear the saved chat history for a project."""
+    _get_project(db, project_id)
+    for m in db.scalars(
+        select(ChatMessage).where(ChatMessage.project_id == project_id)
+    ).all():
+        db.delete(m)
+    db.commit()
+    return {"ok": True}
 
 
 # --- add-node workflow: analyze a concern, then create a neutral node ----------

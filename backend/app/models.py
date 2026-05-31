@@ -122,3 +122,19 @@ class AuditLog(Base):
     actor: Mapped[str] = mapped_column(String(120), default="system")
     action: Mapped[str] = mapped_column(String(120))
     detail: Mapped[str] = mapped_column(Text, default="")
+
+
+class ChatMessage(Base):
+    """A persisted message in the 'Ask about this portfolio' conversation.
+
+    Stored per project so the history survives refreshes, navigation, and restarts.
+    role is 'user' or 'bot'.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    role: Mapped[str] = mapped_column(String(10))  # "user" | "bot"
+    text: Mapped[str] = mapped_column(Text, default="")
