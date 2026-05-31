@@ -251,14 +251,20 @@ def analyze_idea(idea: str, history: list[str] | None = None) -> dict:
         "all mean the name is X. Only treat name as missing if no name appears at all. "
         "Example: 'an AI tool called Receipt Reader that reads invoices' has "
         "name 'Receipt Reader' and goal 'reads invoices'.\n"
-        "Keep asking, one field at a time, until you are confident you have all four. "
-        "Use needs_input ONLY when at least one field is still missing, and list the "
-        "missing field(s) in \"missing\". Never ask for confirmation. Shape:\n"
+        "These four are the ONLY fields you collect from the client. The \"missing\" "
+        "array may contain ONLY these names: name, goal, budget_eur, time_weeks. Never "
+        "put anything else there. In particular, the five assessment dimensions below "
+        "(time, money, reputation, relationships, reversibility) are things YOU judge, "
+        "never things you ask the client for.\n"
+        "Keep asking, one field at a time, until you have all four. "
+        "Use needs_input ONLY when at least one of the four is still missing. Never ask "
+        "for confirmation. Shape:\n"
         '  {"status":"needs_input","collected":{"name":..,"goal":..,"budget_eur":..,'
         '"time_weeks":..},"missing":["field"],"question":"<polite ask for ONE field>"}\n\n'
         "ASSESSMENT:\n"
-        "As soon as all four fields are present (none null), you MUST go straight to the "
-        "assessment below. Do not ask to confirm. Assess Affordable Loss across five dimensions "
+        "As soon as name, goal, budget_eur and time_weeks are all present (none null), "
+        "you MUST go straight to the assessment. Do not ask to confirm. Assess Affordable "
+        "Loss across five dimensions "
         "(time, money, reputation, relationships, reversibility) and respond with:\n"
         '  {"status":"ready","collected":{...},"dimensions":{"time":{"tier":"Low|Medium|'
         'High|Critical","note":"short"},"money":{...},"reputation":{...},'
@@ -277,25 +283,32 @@ def analyze_idea(idea: str, history: list[str] | None = None) -> dict:
             max_tokens=480,
         )
         out = _extract_json(raw)
-        # Safety net: model collected everything but stalled on a confirmation turn.
-        # Force the assessment instead of looping forever.
-        if out.get("status") == "needs_input" and not out.get("missing"):
+        # Safety net: if the four real fields are all present but the model still
+        # returned needs_input (e.g. it listed assessment dimensions as "missing", or
+        # stalled on a confirmation turn), force the assessment instead of looping.
+        if out.get("status") == "needs_input":
             collected = out.get("collected") or {}
-            if all(collected.get(f) not in (None, "") for f in REQUIRED_FIELDS):
+            real_missing = [f for f in REQUIRED_FIELDS if collected.get(f) in (None, "")]
+            if not real_missing:
                 forced = _call(
                     [
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": instruction},
                         {"role": "assistant", "content": json.dumps(out)},
                         {"role": "user", "content":
-                            "All four fields are present. Do not ask for confirmation. "
-                            "Return the final assessment now as the ready JSON object."},
+                            "Name, goal, budget_eur and time_weeks are all present. The "
+                            "five dimensions are for you to judge, not to ask about. Do "
+                            "not ask for confirmation. Return the final assessment now as "
+                            "the ready JSON object."},
                     ],
                     max_tokens=480,
                 )
                 forced_out = _extract_json(forced)
                 if forced_out.get("status") == "ready":
                     return forced_out
+                # If the model still will not assess, surface only the real missing
+                # fields (none here) so the UI never asks for a dimension.
+                out["missing"] = real_missing
         if out.get("status") in ("blocked", "needs_input", "ready"):
             return out
         return _mock_analyze(transcript)
