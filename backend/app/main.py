@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import config, guardrails, llm, schemas, seed, status_engine
+from . import config, llm, schemas, seed, status_engine
 from .db import Base, SessionLocal, engine, get_db
 from .models import AuditLog, Project
 
@@ -312,10 +312,6 @@ def ask(body: schemas.ChatIn, db: Session = Depends(get_db)) -> dict:
     """
     if body.project_id is None:
         raise HTTPException(400, "project_id is required for a context answer")
-    gate = guardrails.injection_only(body.message)
-    if not gate["ok"]:
-        return {"answer": gate["reason"], "blocked": True,
-                "drift": {"drift": False, "reason": ""}, "mock_mode": config.LLM_MOCK}
     parent = _get_project(db, body.project_id)
     children = list(
         db.scalars(select(Project).where(Project.parent_id == parent.id)).all()
@@ -339,19 +335,19 @@ def ask(body: schemas.ChatIn, db: Session = Depends(get_db)) -> dict:
 
 @app.post("/analyze")
 def analyze(body: schemas.AnalyzeIn) -> dict:
-    """Intake a new project with guardrails + slot-filling.
+    """Intake a new project. Safety and slot-filling are handled in the LLM prompt.
 
-    1. Deterministic guardrails reject injection / trolling / junk before any
-       token is spent.
-    2. The LLM keeps asking for the hard requirements (name, goal, budget, time)
-       until it is confident it has them, then returns a verdict.
+    The prompt defines the assistant's role, treats user input as data (not
+    instructions), politely refuses bad intent, and keeps asking for the hard
+    requirements (name, goal, budget, time) until it has them, then returns a
+    verdict. See llm.analyze_idea.
     """
-    gate = guardrails.check(body.idea)
-    if not gate["ok"]:
+    if not (body.idea or "").strip():
         return {
-            "status": "blocked",
-            "reason": gate["reason"],
-            "category": gate["category"],
+            "status": "needs_input",
+            "collected": {"name": None, "goal": None, "budget_eur": None, "time_weeks": None},
+            "missing": list(llm.REQUIRED_FIELDS),
+            "question": "Describe the project you want to add.",
             "mock_mode": config.LLM_MOCK,
         }
     result = llm.analyze_idea(body.idea, body.history)
