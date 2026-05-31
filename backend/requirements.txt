@@ -6,3 +6,4 @@ httpx==0.28.1
 python-dotenv==1.0.1
 # Only needed if you switch DATABASE_URL to Postgres:
 # psycopg[binary]==3.2.3
+slack_bolt

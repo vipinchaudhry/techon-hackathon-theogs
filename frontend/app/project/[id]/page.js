@@ -140,7 +140,7 @@ export default function ProjectPage() {
       )}
 
       {/* Ask the AI, with portfolio context */}
-      <AskPanel projectId={id} />
+      <AskPanel projectId={id} onApplied={load} />
 
       {/* History */}
       <div className="card" style={{ marginTop: 16 }}>
@@ -580,7 +580,7 @@ function RollupPanel({ rollup, children }) {
   );
 }
 
-function AskPanel({ projectId }) {
+function AskPanel({ projectId, onApplied }) {
   const [log, setLog] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -609,9 +609,12 @@ function AskPanel({ projectId }) {
     setBusy(true);
     try {
       const res = await api.ask(msg, Number(projectId));
-      const parts = [res.answer];
-      if (res.drift?.drift) parts.push("Heads up, that leans on ROI thinking: " + res.drift.reason);
-      setLog((l) => [...l, { who: "bot", text: parts.filter(Boolean).join("\n\n") }]);
+      setLog((l) => [...l, { who: "bot", text: res.answer || "(no change)" }]);
+      // If the navigator changed a parameter, refresh the page so the loss
+      // profile, graph, and outcome reflect the new data.
+      if (res.applied_fields && Object.keys(res.applied_fields).length && onApplied) {
+        onApplied();
+      }
     } catch (e) {
       setLog((l) => [...l, { who: "bot", text: "Error: " + e.message }]);
     } finally {
@@ -629,15 +632,15 @@ function AskPanel({ projectId }) {
       <div className="spread" style={{ marginBottom: 6 }}>
         <div className="row">
           <div className="chip coral"><IconTarget /></div>
-          <h3 style={{ margin: 0 }}>Ask about this portfolio</h3>
+          <h3 style={{ margin: 0 }}>Navigator</h3>
         </div>
         {log.length > 0 && (
           <button className="secondary" onClick={clear}>Clear history</button>
         )}
       </div>
       <p className="small muted">
-        The AI sees every project here. Try: "which losing projects should we keep?"
-        Your conversation is saved.
+        Adjust the project or ask for a read. Try "the budget went down by 20k" or
+        "which losing projects can we keep?" Changes are saved.
       </p>
       <div className="chat-log">
         {loaded && log.length === 0 && (
@@ -650,9 +653,9 @@ function AskPanel({ projectId }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder="Ask about the projects..."
+          placeholder="Adjust a parameter or ask a question..."
         />
-        <button onClick={send} disabled={busy}>{busy ? "..." : "Ask"}</button>
+        <button onClick={send} disabled={busy}>{busy ? "..." : "Send"}</button>
       </div>
     </div>
   );

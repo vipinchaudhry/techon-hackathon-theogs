@@ -344,16 +344,44 @@ def ask(body: schemas.ChatIn, db: Session = Depends(get_db)) -> dict:
     else:
         context = _portfolio_context(parent, children)
 
-    answer = llm.answer_with_context(body.message, context)
-    drift = llm.detect_drift(body.message)
+    # Unified navigator turn: apply any parameter change AND answer concretely.
+    current = {f: getattr(parent, f) for f in EDITABLE_FIELDS}
+    result = llm.converse(body.message, current, context)
+    reply = (result.get("reply") or "").strip()
+    updates = result.get("updates") or {}
 
-    # Persist both turns so the conversation survives refreshes / navigation.
-    bot_text = answer
-    if drift.get("drift"):
-        bot_text += "\n\nHeads up, that leans on ROI thinking: " + drift.get("reason", "")
+    applied = {}
+    for field in EDITABLE_FIELDS:
+        if field in updates and updates[field] is not None:
+            setattr(parent, field, updates[field])
+            applied[field] = updates[field]
+    if applied:
+        parent.audit_entries.append(
+            AuditLog(
+                actor="navigator",
+                action="edited-from-chat",
+                detail=", ".join(f"{k}={v}" for k, v in applied.items())[:480],
+            )
+        )
+
+    # The bot message records the reply plus a confirmation of what changed.
+    bot_text = reply
+    if applied:
+        change = ", ".join(f"{k} to {v}" for k, v in applied.items())
+        bot_text = (reply + "\n\n" if reply else "") + f"Updated {change}."
+
     db.add(ChatMessage(project_id=parent.id, role="user", text=body.message))
-    db.add(ChatMessage(project_id=parent.id, role="bot", text=bot_text))
+    db.add(ChatMessage(project_id=parent.id, role="bot", text=bot_text or "(no change)"))
     db.commit()
+    if applied:
+        store.export_json(db)
+
+    return {
+        "answer": bot_text,
+        "applied_fields": applied,
+        "status": status_engine.evaluate(parent),
+        "mock_mode": config.LLM_MOCK,
+    }
 
     return {"answer": answer, "drift": drift, "mock_mode": config.LLM_MOCK}
 

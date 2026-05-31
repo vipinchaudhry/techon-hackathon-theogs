@@ -58,6 +58,14 @@ class Project(Base):
     relationships_tier: Mapped[str] = mapped_column(String(10), default="Low")
     reversibility_tier: Mapped[str] = mapped_column(String(10), default="Low")
 
+    # --- Guardrail / escalation (the Slack bot) ---
+    # Where the project lives in Slack, who to escalate to, and how far up the
+    # escalation ladder we have climbed (0 = fine, higher = more insistent).
+    slack_channel: Mapped[str] = mapped_column(String(80), default="")
+    sponsor: Mapped[str] = mapped_column(String(120), default="")
+    escalation_level: Mapped[int] = mapped_column(Integer, default=0)
+    frozen: Mapped[bool] = mapped_column(Integer, default=0)  # 0/1 stored as int
+
     # --- Profit / loss forecast ---
     # positive = green (profit), negative = red (loss), NULL = grey (no forecast yet)
     pnl_eur: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)

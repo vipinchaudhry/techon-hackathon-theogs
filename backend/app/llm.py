@@ -171,6 +171,72 @@ def detect_drift(text: str) -> dict:
         return _mock_drift(text)
 
 
+def converse(message: str, current: dict, context: str) -> dict:
+    """Unified navigator turn: BOTH adjust parameters AND answer with concrete,
+    resource-based estimates. Returns {updates: {field: abs_value}, reply: str}.
+
+    The navigator never makes the stop/go decision and never refuses a legitimate
+    edit. It applies the change the user states (resolving relative deltas against
+    the current values) and gives a short, concrete answer grounded in the
+    resources available, always through Affordable Loss.
+    """
+    current = current or {}
+    if config.LLM_MOCK:
+        parsed = _mock_parse(message, current)
+        updates = {k: v for k, v in parsed.items()
+                   if k != "assistant_reply" and v is not None}
+        reply = parsed.get("assistant_reply") or _mock_answer(message, context)
+        return {"updates": updates, "reply": reply}
+
+    cur_lines = "\n".join(f"  {k} = {v}" for k, v in current.items() if v is not None)
+    instruction = (
+        "You are the Navigator, the interface to a project portfolio. You do two "
+        "things and nothing else:\n"
+        "1) Apply parameter changes the user states. Resolve relative changes against "
+        "the CURRENT VALUES (e.g. money_committed 50000 and 'budget reduced by 20k' -> "
+        "30000). Editable fields: money_committed (EUR), money_spent (EUR), "
+        "time_committed_weeks, time_spent_weeks, reputation_tier, relationships_tier, "
+        "reversibility_tier (Low/Medium/High/Critical), pnl_eur (EUR number).\n"
+        "2) Give a concrete answer grounded in the resources available, always through "
+        "Affordable Loss (what the team can absorb if it fails), never ROI or revenue "
+        "projections.\n"
+        "You never make the stop or go decision for them. You do not refuse to record a "
+        "change. If the user reports an observation (for example a positive customer "
+        "signal), do not invent numbers, just acknowledge it and relate it to "
+        "affordable loss.\n"
+        "Respond with ONLY JSON: {\"updates\": {<field>: <absolute number or tier>}, "
+        "\"reply\": \"one or two short sentences\"}. updates is {} if nothing changed. "
+        "No em dashes.\n\n"
+        f"CURRENT VALUES:\n{cur_lines or '  (none)'}\n\n"
+        f"PORTFOLIO CONTEXT:\n{context}\n\n"
+        f"USER MESSAGE:\n{message}"
+    )
+    try:
+        raw = _call(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": instruction},
+            ],
+            max_tokens=320,
+        )
+        out = _extract_json(raw)
+        if isinstance(out, dict) and ("updates" in out or "reply" in out):
+            out.setdefault("updates", {})
+            out.setdefault("reply", "")
+            if not isinstance(out["updates"], dict):
+                out["updates"] = {}
+            return out
+        # Fall back: treat as a plain answer.
+        return {"updates": {}, "reply": answer_with_context(message, context)}
+    except BudgetExceeded:
+        raise
+    except Exception:
+        parsed = _mock_parse(message, current)
+        updates = {k: v for k, v in parsed.items()
+                   if k != "assistant_reply" and v is not None}
+        return {"updates": updates, "reply": parsed.get("assistant_reply", "")}
+
+
 def answer_with_context(question: str, context: str) -> str:
     """Answer a question about the portfolio, given a text snapshot of the projects.
 

@@ -23,6 +23,19 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(BACKEND_DIR / ".env")
 
 
+def _read_token_from_api_md(prefix: str) -> str | None:
+    """Grab a token with a given prefix (e.g. 'xoxb-', 'xapp-') from api.md.
+
+    Accepts labeled lines (SLACK_BOT_TOKEN=xoxb-...) or the bare token.
+    """
+    api_md = TECHON_DIR / "api.md"
+    if not api_md.exists():
+        return None
+    text = api_md.read_text(encoding="utf-8")
+    match = re.search(re.escape(prefix) + r"[A-Za-z0-9\-]+", text)
+    return match.group(0) if match else None
+
+
 def _read_key_from_api_md() -> str | None:
     """
     The team agreed to put the OpenRouter key in techon/api.md.
@@ -68,6 +81,13 @@ LLM_MOCK = os.getenv("LLM_MOCK") == "1" or OPENROUTER_API_KEY is None
 # Soft guardrail for the $20 testing budget. We do not bill you; this is just a
 # visible counter the app refuses to cross so a runaway loop can't drain credit.
 LLM_TEST_BUDGET_USD = float(os.getenv("LLM_TEST_BUDGET_USD", "20"))
+
+
+# --- Slack -------------------------------------------------------------------
+# Bot token (xoxb-) and app-level token (xapp-, for Socket Mode). Put them in
+# techon/api.md or as env vars. No public URL needed with Socket Mode.
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN") or _read_token_from_api_md("xoxb-")
+SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN") or _read_token_from_api_md("xapp-")
 
 
 # --- Database ------------------------------------------------------------------
