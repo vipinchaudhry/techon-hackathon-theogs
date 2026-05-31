@@ -40,10 +40,28 @@ export default function Home() {
 
   return (
     <div>
+      <div className="hero">
+        <div className="eyebrow">The Uncertainty Navigator</div>
+        <h1>Commit to the next step, even when you cannot predict the outcome.</h1>
+        <p>
+          95% of corporate pilots fail, usually because nobody decided to stop them.
+          This tool replaces ROI guesses with Affordable Loss: what you can put on the
+          table and be fine losing if it fails. See every bet, judge it across five
+          dimensions, and act before it drifts.
+        </p>
+        <div className="hero-tags">
+          <span className="htag">Time</span>
+          <span className="htag">Money</span>
+          <span className="htag">Reputation</span>
+          <span className="htag">Relationships</span>
+          <span className="htag">Reversibility</span>
+        </div>
+      </div>
+
       <div className="page-head">
         <div>
           <h1>Portfolio</h1>
-          <p className="sub">Decisions driven by what you can afford to lose — not ROI guesses.</p>
+          <p className="sub">Decisions driven by what you can afford to lose, not ROI guesses.</p>
         </div>
         <button className="secondary" onClick={reset}>Reset demo</button>
       </div>

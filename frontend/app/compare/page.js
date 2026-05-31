@@ -31,7 +31,7 @@ export default function ComparePage() {
     <div>
       <h1>Compare</h1>
       <p className="sub">
-        Put projects side by side. It shows the stakes — it doesn't rank or pick for you.
+        Put projects side by side. It shows the stakes, it does not rank or pick for you.
       </p>
       <ErrorBox error={error} />
 

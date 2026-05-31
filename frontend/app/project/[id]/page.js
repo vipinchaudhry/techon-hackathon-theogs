@@ -118,12 +118,12 @@ export default function ProjectPage() {
                 <div className="chip blue"><IconFlag /></div>
                 <h3 style={{ margin: 0 }}>Next step</h3>
               </div>
-              <div className="kv"><span className="k">Hypothesis</span><span>{project.hypothesis || "—"}</span></div>
-              <div className="kv"><span className="k">Smallest test</span><span>{project.smallest_test || "—"}</span></div>
-              <div className="kv"><span className="k">Talk to</span><span>{project.contact_person || "—"}</span></div>
-              <div className="kv"><span className="k">Ask them</span><span>{project.contact_question || "—"}</span></div>
-              <div className="kv"><span className="k">Keep going if</span><span>{project.signal_keep || "—"}</span></div>
-              <div className="kv"><span className="k">Stop if</span><span>{project.signal_stop || "—"}</span></div>
+              <div className="kv"><span className="k">Hypothesis</span><span>{project.hypothesis || "Not set"}</span></div>
+              <div className="kv"><span className="k">Smallest test</span><span>{project.smallest_test || "Not set"}</span></div>
+              <div className="kv"><span className="k">Talk to</span><span>{project.contact_person || "Not set"}</span></div>
+              <div className="kv"><span className="k">Ask them</span><span>{project.contact_question || "Not set"}</span></div>
+              <div className="kv"><span className="k">Keep going if</span><span>{project.signal_keep || "Not set"}</span></div>
+              <div className="kv"><span className="k">Stop if</span><span>{project.signal_stop || "Not set"}</span></div>
             </div>
           </div>
         </>
