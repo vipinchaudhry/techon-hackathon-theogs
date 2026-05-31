@@ -15,3 +15,4 @@ frontend/.env.local
 
 # --- os ---
 .DS_Store
+backend/data/

@@ -14,9 +14,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import config, llm, schemas, seed, status_engine
+from . import config, llm, schemas, seed, status_engine, store
 from .db import Base, SessionLocal, engine, get_db
 from .models import AuditLog, Project
+
+# Project fields the navigator (or a manual edit) may change.
+EDITABLE_FIELDS = (
+    "money_committed", "money_spent", "time_committed_weeks", "time_spent_weeks",
+    "reputation_tier", "relationships_tier", "reversibility_tier",
+    "uncertainty_type", "pnl_eur",
+)
 
 app = FastAPI(title="Uncertainty Navigator", version="1.0")
 
@@ -36,6 +43,7 @@ def _startup() -> None:
     db = SessionLocal()
     try:
         seed.seed_all(db)  # only seeds if empty
+        store.export_json(db)  # write the readable JSON mirror
     finally:
         db.close()
 
@@ -62,7 +70,14 @@ def health() -> dict:
 def reset(db: Session = Depends(get_db)) -> dict:
     """Wipe and re-seed the three case studies. Handy between demo runs."""
     seed.seed_all(db, force=True)
+    store.export_json(db)
     return {"ok": True, "message": "Re-seeded Kodak, Google, Sony."}
+
+
+@app.get("/data")
+def data(db: Session = Depends(get_db)) -> dict:
+    """The whole dataset as plain JSON (same content as data/projects.json)."""
+    return store.snapshot(db)
 
 
 # --- projects ------------------------------------------------------------------
@@ -99,6 +114,7 @@ def create_project(body: schemas.ProjectCreate, db: Session = Depends(get_db)) -
     db.flush()
     p.audit_entries.append(AuditLog(actor="user", action="created", detail=p.name))
     db.commit()
+    store.export_json(db)
     return p
 
 
@@ -119,6 +135,7 @@ def update_project(
             )
         )
     db.commit()
+    store.export_json(db)
     return p
 
 
@@ -127,6 +144,7 @@ def delete_project(project_id: int, db: Session = Depends(get_db)) -> dict:
     p = _get_project(db, project_id)
     db.delete(p)
     db.commit()
+    store.export_json(db)
     return {"ok": True}
 
 
@@ -249,50 +267,33 @@ def chat(body: schemas.ChatIn, db: Session = Depends(get_db)) -> dict:
     Parse natural language into structured loss fields and check for drift.
     If project_id is given, the parsed numeric/tier fields are applied to it.
     """
-    # Give the parser the project's current numbers so relative edits
+    # Give the parser the project's current values so relative edits
     # ("budget went down by 20k") resolve against them.
     current = None
     p = None
     if body.project_id is not None:
         p = _get_project(db, body.project_id)
-        current = {
-            "money_committed": p.money_committed,
-            "money_spent": p.money_spent,
-            "time_committed_weeks": p.time_committed_weeks,
-            "time_spent_weeks": p.time_spent_weeks,
-            "reputation_tier": p.reputation_tier,
-            "relationships_tier": p.relationships_tier,
-            "reversibility_tier": p.reversibility_tier,
-        }
+        current = {f: getattr(p, f) for f in EDITABLE_FIELDS}
 
     parsed = llm.parse_to_fields(body.message, current)
     drift = llm.detect_drift(body.message)
 
     applied = {}
     if p is not None:
-        field_map = {
-            "money_committed": "money_committed",
-            "money_spent": "money_spent",
-            "time_committed_weeks": "time_committed_weeks",
-            "time_spent_weeks": "time_spent_weeks",
-            "reputation_tier": "reputation_tier",
-            "relationships_tier": "relationships_tier",
-            "reversibility_tier": "reversibility_tier",
-            "uncertainty_type": "uncertainty_type",
-        }
-        for key, attr in field_map.items():
-            if key in parsed and parsed[key] is not None:
-                setattr(p, attr, parsed[key])
-                applied[attr] = parsed[key]
+        for field in EDITABLE_FIELDS:
+            if field in parsed and parsed[field] is not None:
+                setattr(p, field, parsed[field])
+                applied[field] = parsed[field]
         if applied:
             p.audit_entries.append(
                 AuditLog(
-                    actor="llm",
-                    action="parsed-from-chat",
+                    actor="navigator",
+                    action="edited-from-chat",
                     detail=", ".join(f"{k}={v}" for k, v in applied.items())[:480],
                 )
             )
             db.commit()
+            store.export_json(db)  # keep the readable JSON mirror in sync
 
     return {
         "assistant_reply": parsed.get("assistant_reply", ""),
@@ -396,6 +397,7 @@ def add_node(body: schemas.AddNodeIn, db: Session = Depends(get_db)) -> Project:
         AuditLog(actor="user", action="added-node", detail=f"{p.name} (no forecast yet)")
     )
     db.commit()
+    store.export_json(db)
     return p
 
 
@@ -420,6 +422,7 @@ def log_decision(
         )
     )
     db.commit()
+    store.export_json(db)
     return {"ok": True, "status": status_engine.evaluate(p)}
 
 
