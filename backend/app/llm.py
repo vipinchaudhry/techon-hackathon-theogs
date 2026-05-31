@@ -198,6 +198,43 @@ def answer_with_context(question: str, context: str) -> str:
         return _mock_answer(question, context)
 
 
+def reframe_case(wrong_question: str, facts: str) -> str:
+    """Counterfactual reframe: turn the ROI/wrong question a team actually asked
+    into the affordable-loss instruction the tool would have given. 2-3 sentences."""
+    if config.LLM_MOCK:
+        return (
+            "Offline mode: instead of asking about expected return, ask what you could "
+            "put on the table and be fine losing to learn if this is real, then take the "
+            "smallest concrete step to find out."
+        )
+    instruction = (
+        "A team faced this decision and asked the wrong, prediction-based question:\n"
+        f'  "{wrong_question}"\n\n'
+        "Here are the facts:\n"
+        f"{facts}\n\n"
+        "Give the affordable-loss instruction the team should have followed instead. "
+        "Reframe away from expected return toward what they can absorb if it fails, and "
+        "end with one concrete next step. 2 to 3 sentences, plain language, no ROI, no "
+        "em dashes."
+    )
+    try:
+        return _call(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": instruction},
+            ],
+            max_tokens=220,
+        ).strip()
+    except BudgetExceeded:
+        raise
+    except Exception:
+        return (
+            "Reframe the question from expected return to affordable loss: decide the "
+            "small amount you can lose to learn if this is real, then take the smallest "
+            "step that produces a signal."
+        )
+
+
 # Hard requirements: every project node must define all four before any verdict.
 REQUIRED_FIELDS = ("name", "goal", "budget_eur", "time_weeks")
 FIELD_PROMPTS = {
