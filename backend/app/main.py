@@ -469,3 +469,91 @@ def get_scenario(key: str, db: Session = Depends(get_db)) -> dict:
         "project_id": proj.id if proj else None,
         "steps": scenario["steps"],
     }
+
+
+# --- "would it have changed the outcome?" (challenge acceptance test) ----------
+
+@app.get("/cases/{key}/outcome")
+def case_outcome(key: str, db: Session = Depends(get_db)) -> dict:
+    """The counterfactual for a case study: what the team actually did and its
+    cost, versus the affordable-loss guidance the tool produces from the same
+    data. The `tool` block is computed live so it is real, not hard-coded."""
+    meta = seed.CASE_OUTCOMES.get(key)
+    if not meta:
+        raise HTTPException(404, "Unknown case")
+    proj = db.scalar(select(Project).where(Project.name == meta["project_name"]))
+    if not proj:
+        raise HTTPException(404, "Case project not seeded")
+
+    children = list(db.scalars(select(Project).where(Project.parent_id == proj.id)).all())
+    status = status_engine.evaluate(proj)
+
+    tool: dict = {
+        "recommended_action": status["recommended_action"],
+        "overall_tier": status["overall_tier"],
+    }
+
+    if key == "kodak":
+        facts = (
+            f"Project: {proj.name}. Money we can absorb: EUR {int(proj.money_committed):,}. "
+            f"Time boundary: {proj.time_committed_weeks:g} weeks. "
+            f"Reputation exposure: {proj.reputation_tier}. "
+            f"Smallest test: {proj.smallest_test}"
+        )
+        tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
+        tool["next_step"] = (
+            f"Talk to {proj.contact_person}. Ask: {proj.contact_question} "
+            f"Keep going if {proj.signal_keep}"
+        )
+        tool["verdict"] = "Keep the bet: it is affordable, not a threat to the film business."
+
+    elif key == "google":
+        roll = status_engine.rollup(proj, children)
+        tool["boundary_breached"] = roll["boundary_breached"]
+        tool["portfolio_flags"] = roll["portfolio_flags"]
+        tool["verdict"] = (
+            "Program-level boundary breached: force an explicit re-commitment now."
+            if roll["boundary_breached"]
+            else "Program within boundary."
+        )
+        facts = (
+            f"Program: {proj.name}. {len(children)} sub-projects. "
+            f"Sub-project money committed totals EUR {int(roll['totals']['money_committed']):,} "
+            f"against a program boundary of EUR {int(roll['program_boundary']['money_committed']):,}."
+        )
+        tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
+
+    elif key == "sony":
+        views = []
+        for sh in proj.stakeholders:
+            tiers = {
+                "money": sh.money_tier, "time": sh.time_tier,
+                "reputation": sh.reputation_tier, "relationships": sh.relationships_tier,
+                "reversibility": sh.reversibility_tier,
+            }
+            views.append({"name": sh.name, "role": sh.role,
+                          "overall_tier": status_engine._worst(*tiers.values()),
+                          "tiers": tiers})
+        tool["stakeholder_views"] = views
+        tool["verdict"] = (
+            "Different stakes per person: the sponsor can absorb a loss the team cannot, "
+            "so the continue decision belongs to the sponsor."
+        )
+        facts = (
+            f"Project: {proj.name}. Stakeholders and their overall affordable-loss tier: "
+            + "; ".join(f"{v['name']} ({v['role']}) = {v['overall_tier']}" for v in views)
+        )
+        tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
+
+    return {
+        "key": key,
+        "project_id": proj.id,
+        "historical": {
+            "wrong_question": meta["wrong_question"],
+            "actual_decision": meta["actual_decision"],
+            "cost": meta["cost"],
+        },
+        "tool": tool,
+        "averted": meta["averted"],
+        "mock_mode": config.LLM_MOCK,
+    }

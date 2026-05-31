@@ -210,6 +210,34 @@ def seed_all(db: Session, force: bool = False) -> None:
 # Each step has narration + a hint of what to look at on screen. The frontend
 # steps through these for the pitch. They reference seeded projects by name.
 
+# --- counterfactual outcomes (challenge: "would it have changed the outcome?") -
+# What the company ACTUALLY did, the wrong question they asked, and the cost. The
+# tool's affordable-loss answer is generated live and merged in by the endpoint.
+CASE_OUTCOMES = {
+    "kodak": {
+        "project_name": "Kodak — Filmless (Digital) Camera",
+        "wrong_question": "What is the expected return on a filmless camera?",
+        "actual_decision": "Buried the prototype to avoid cannibalizing film revenue.",
+        "cost": "Filed for bankruptcy in 2012 after missing the digital shift it invented.",
+        "averted": "Reframed as a 50k, 12-week probe to learn if digital is real, the camera is an affordable bet to keep, not a threat to kill.",
+    },
+    "google": {
+        "project_name": "Google — 20% Time Program",
+        "wrong_question": "Does any single 20% project look dangerous right now?",
+        "actual_decision": "Let the program erode project by project until it quietly died.",
+        "cost": "Lost the culture that produced Gmail, AdSense and News; moonshots moved to a walled-off unit.",
+        "averted": "Rolling the projects up trips a program-level boundary breach, forcing an explicit re-commitment before the program bleeds out.",
+    },
+    "sony": {
+        "project_name": "Sony — PlayStation (Kutaragi's side project)",
+        "wrong_question": "Should the company drop this embarrassing side project?",
+        "actual_decision": "Executives nearly killed it after the Nintendo/Philips snub.",
+        "cost": "Would have forgone the PlayStation: 100M+ units and more operating income than all of consumer electronics.",
+        "averted": "Per-stakeholder profiles show the sponsor can absorb a loss the team cannot, so the continue call sits with Ohga, not the panicked room.",
+    },
+}
+
+
 SCENARIOS = {
     "kodak": {
         "title": "Kodak: Reframe the room",

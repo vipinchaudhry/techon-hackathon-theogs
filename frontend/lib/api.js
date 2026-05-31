@@ -54,4 +54,5 @@ export const api = {
 
   scenarios: () => req("/scenarios"),
   scenario: (key) => req(`/scenarios/${key}`),
+  outcome: (key) => req(`/cases/${key}/outcome`),
 };
