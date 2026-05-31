@@ -208,6 +208,52 @@ FIELD_PROMPTS = {
 }
 
 
+def _assess_collected(collected: dict) -> dict | None:
+    """Assessment-only call: given the four fields, return the ready verdict.
+
+    Its prompt offers no other option, so the model cannot stall on a
+    confirmation turn. Returns None if it somehow does not produce a verdict.
+    """
+    facts = (
+        f"name: {collected.get('name')}\n"
+        f"goal: {collected.get('goal')}\n"
+        f"budget_eur: {collected.get('budget_eur')}\n"
+        f"time_weeks: {collected.get('time_weeks')}"
+    )
+    instruction = (
+        "Assess this project through Affordable Loss only (never ROI), across five "
+        "dimensions: time, money, reputation, relationships, reversibility. The project "
+        "details are complete; do not ask any questions. Respond with ONLY this JSON:\n"
+        '{"status":"ready","collected":{"name":..,"goal":..,"budget_eur":..,'
+        '"time_weeks":..},"dimensions":{"time":{"tier":"Low|Medium|High|Critical",'
+        '"note":"short"},"money":{...},"reputation":{...},"relationships":{...},'
+        '"reversibility":{...}},"verdict":"safe|caution|risky","summary":"one sentence",'
+        '"suggested_name":"...","suggested_budget":number}\n'
+        "Mark safe only when the worst case is clearly absorbable. No em dashes.\n\n"
+        f"PROJECT:\n{facts}"
+    )
+    try:
+        raw = _call(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": instruction},
+            ],
+            max_tokens=420,
+        )
+        out = _extract_json(raw)
+        if out.get("dimensions") and out.get("verdict"):
+            out["status"] = "ready"
+            out.setdefault("collected", collected)
+            out.setdefault("suggested_name", collected.get("name"))
+            out.setdefault("suggested_budget", collected.get("budget_eur"))
+            return out
+    except BudgetExceeded:
+        raise
+    except Exception:
+        return None
+    return None
+
+
 def analyze_idea(idea: str, history: list[str] | None = None) -> dict:
     """Slot-filling project intake with safety checks.
 
@@ -293,30 +339,17 @@ def analyze_idea(idea: str, history: list[str] | None = None) -> dict:
         collected = out.get("collected") or {}
         real_missing = [f for f in REQUIRED_FIELDS if collected.get(f) in (None, "")]
 
-        # All four present but no verdict yet: force the assessment, retrying a
-        # couple of times before giving up.
-        if real_missing == [] and out.get("status") != "ready":
-            for _ in range(2):
-                forced = _call(
-                    [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": instruction},
-                        {"role": "assistant", "content": json.dumps(out)},
-                        {"role": "user", "content":
-                            "Name, goal, budget_eur and time_weeks are all present. The "
-                            "five dimensions are for you to judge, not to ask about. Do "
-                            "not ask for confirmation. Return the final ready assessment "
-                            "JSON now."},
-                    ],
-                    max_tokens=480,
-                )
-                forced_out = _extract_json(forced)
-                if forced_out.get("status") == "ready":
-                    return forced_out
-                out = forced_out or out
-
         if out.get("status") == "ready":
             return out
+
+        # All four present but no verdict yet (model stalled on a confirmation turn,
+        # or listed dimensions as missing): run a dedicated assessment-only call whose
+        # prompt can ONLY return a verdict. This removes the flakiness of asking the
+        # intake prompt to "stop confirming".
+        if real_missing == []:
+            assessed = _assess_collected(collected)
+            if assessed:
+                return assessed
         # Still gathering: only ever report genuinely missing required fields.
         out["status"] = "needs_input"
         out["collected"] = collected
