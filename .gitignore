@@ -1,0 +1,17 @@
+# --- secrets: never commit the API key ---
+api.md
+
+# --- python backend ---
+backend/.venv/
+**/__pycache__/
+*.pyc
+backend/.env
+backend/navigator.db
+
+# --- next.js frontend ---
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+
+# --- os ---
+.DS_Store
