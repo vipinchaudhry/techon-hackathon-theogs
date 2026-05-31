@@ -100,25 +100,30 @@ def _extract_json(text: str) -> dict:
 
 # --- public functions ----------------------------------------------------------
 
-def parse_to_fields(text: str) -> dict:
+def parse_to_fields(text: str, current: dict | None = None) -> dict:
     """
-    Natural language -> structured loss fields.
-    Returns a dict with any of: money_committed, time_committed_weeks,
-    reputation_tier, relationships_tier, reversibility_tier, uncertainty_type,
-    plus a short 'assistant_reply' and a list of 'clarifying_questions'.
+    Natural language -> structured loss fields, returned as ABSOLUTE values.
+    `current` holds the project's existing numbers so relative edits like
+    "budget went down by 20k" or "add 3 more weeks" resolve correctly.
     """
+    current = current or {}
     if config.LLM_MOCK:
-        return _mock_parse(text)
+        return _mock_parse(text, current)
 
+    cur_lines = "\n".join(f"  {k} = {v}" for k, v in current.items() if v is not None)
     instruction = (
-        "Extract Affordable-Loss fields from the user's message. Respond with ONLY a "
-        "JSON object with these optional keys: money_committed (number, EUR), "
-        "time_committed_weeks (number), reputation_tier, relationships_tier, "
-        "reversibility_tier (each one of Low/Medium/High/Critical), uncertainty_type "
-        "(Technology/Market/Stakeholder/Resource), assistant_reply (one short, "
-        "loss-framed sentence reflecting what you captured), and clarifying_questions "
-        "(array of up to 2 short strings about the smallest test and who to contact). "
-        "Only include fields you are confident about.\n\nUser message:\n" + text
+        "The user is editing an existing project. Apply their change and respond with "
+        "ONLY a JSON object of the RESULTING ABSOLUTE values for any fields they changed: "
+        "money_committed (EUR), money_spent (EUR), time_committed_weeks, time_spent_weeks, "
+        "reputation_tier, relationships_tier, reversibility_tier "
+        "(each Low/Medium/High/Critical), uncertainty_type "
+        "(Technology/Market/Stakeholder/Resource), plus assistant_reply (one short "
+        "sentence stating the new value).\n"
+        "Relative changes must be applied to the current values below. For example, if "
+        "money_committed is 50000 and the user says 'budget went down by 20k', return "
+        "money_committed = 30000. Only include fields the user actually changed.\n\n"
+        f"CURRENT VALUES:\n{cur_lines or '  (none)'}\n\n"
+        f"USER CHANGE:\n{text}"
     )
     try:
         raw = _call(
@@ -128,12 +133,12 @@ def parse_to_fields(text: str) -> dict:
             ]
         )
         out = _extract_json(raw)
-        return out or _mock_parse(text)
+        return out or _mock_parse(text, current)
     except BudgetExceeded:
         raise
     except Exception:
         # Never break the demo on an API hiccup; fall back to mock.
-        return _mock_parse(text)
+        return _mock_parse(text, current)
 
 
 def detect_drift(text: str) -> dict:
@@ -498,9 +503,13 @@ _MONEY_RE = re.compile(r"(?:€|eur|euro[s]?\s*)?\s*([\d][\d.,]*)\s*(k|m|thousan
 _WEEKS_RE = re.compile(r"(\d+)\s*(week|wk|month|mo)", re.IGNORECASE)
 
 
-def _mock_parse(text: str) -> dict:
+def _mock_parse(text: str, current: dict | None = None) -> dict:
+    current = current or {}
     low = text.lower()
     out: dict = {}
+
+    down = any(w in low for w in ("down", "less", "lower", "reduce", "cut", "drop", "decrease", "minus"))
+    up = any(w in low for w in ("more", "raise", "increase", "add", "plus", "extra", "additional"))
 
     # money: look for a number near a currency word
     m = re.search(r"(?:€|eur|euros?\b)\s*([\d][\d.,]*)\s*(k|m)?", low) or re.search(
@@ -509,13 +518,23 @@ def _mock_parse(text: str) -> dict:
     if m:
         num = float(m.group(1).replace(",", "").replace(".", "") or 0) if m.group(1).count(".") > 1 else float(m.group(1).replace(",", ""))
         mult = {"k": 1_000, "m": 1_000_000}.get((m.group(2) or "").lower(), 1)
-        out["money_committed"] = num * mult
+        amt = num * mult
+        base = current.get("money_committed")
+        if (down or up) and base is not None:
+            out["money_committed"] = max(0.0, base - amt if down else base + amt)
+        else:
+            out["money_committed"] = amt
 
     # time
     w = _WEEKS_RE.search(low)
     if w:
         n = float(w.group(1))
-        out["time_committed_weeks"] = n * 4 if w.group(2).lower().startswith("mo") else n
+        weeks = n * 4 if w.group(2).lower().startswith("mo") else n
+        base = current.get("time_committed_weeks")
+        if (down or up) and base is not None:
+            out["time_committed_weeks"] = max(0.0, base - weeks if down else base + weeks)
+        else:
+            out["time_committed_weeks"] = weeks
 
     # reputation / relationships / reversibility cues
     if any(k in low for k in ("cfo", "board", "executive", "leadership", "public", "ceo", "reputation", "look bad", "embarrass")):

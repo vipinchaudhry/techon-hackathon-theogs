@@ -249,15 +249,32 @@ def chat(body: schemas.ChatIn, db: Session = Depends(get_db)) -> dict:
     Parse natural language into structured loss fields and check for drift.
     If project_id is given, the parsed numeric/tier fields are applied to it.
     """
-    parsed = llm.parse_to_fields(body.message)
+    # Give the parser the project's current numbers so relative edits
+    # ("budget went down by 20k") resolve against them.
+    current = None
+    p = None
+    if body.project_id is not None:
+        p = _get_project(db, body.project_id)
+        current = {
+            "money_committed": p.money_committed,
+            "money_spent": p.money_spent,
+            "time_committed_weeks": p.time_committed_weeks,
+            "time_spent_weeks": p.time_spent_weeks,
+            "reputation_tier": p.reputation_tier,
+            "relationships_tier": p.relationships_tier,
+            "reversibility_tier": p.reversibility_tier,
+        }
+
+    parsed = llm.parse_to_fields(body.message, current)
     drift = llm.detect_drift(body.message)
 
     applied = {}
-    if body.project_id is not None:
-        p = _get_project(db, body.project_id)
+    if p is not None:
         field_map = {
             "money_committed": "money_committed",
+            "money_spent": "money_spent",
             "time_committed_weeks": "time_committed_weeks",
+            "time_spent_weeks": "time_spent_weeks",
             "reputation_tier": "reputation_tier",
             "relationships_tier": "relationships_tier",
             "reversibility_tier": "reversibility_tier",
@@ -494,54 +511,42 @@ def case_outcome(key: str, db: Session = Depends(get_db)) -> dict:
     }
 
     if key == "kodak":
-        facts = (
-            f"Project: {proj.name}. Money we can absorb: EUR {int(proj.money_committed):,}. "
-            f"Time boundary: {proj.time_committed_weeks:g} weeks. "
-            f"Reputation exposure: {proj.reputation_tier}. "
-            f"Smallest test: {proj.smallest_test}"
-        )
-        tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
+        tool["verdict"] = status_engine.single_verdict(proj, status)
         tool["next_step"] = (
             f"Talk to {proj.contact_person}. Ask: {proj.contact_question} "
             f"Keep going if {proj.signal_keep}"
         )
-        tool["verdict"] = "Keep the bet: it is affordable, not a threat to the film business."
+        facts = (
+            f"Project: {proj.name}. Money we can absorb: EUR {int(proj.money_committed):,}. "
+            f"Money already spent: EUR {int(proj.money_spent):,}. "
+            f"Time boundary: {proj.time_committed_weeks:g} weeks. "
+            f"Overall risk: {status['overall_tier']}. "
+            f"Re-commitment required: {status['recommit_required']}. "
+            f"Smallest test: {proj.smallest_test}"
+        )
+        tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
 
     elif key == "google":
-        roll = status_engine.rollup(proj, children)
+        verdict, roll = status_engine.portfolio_verdict(proj, children)
+        tool["verdict"] = verdict
         tool["boundary_breached"] = roll["boundary_breached"]
         tool["portfolio_flags"] = roll["portfolio_flags"]
-        tool["verdict"] = (
-            "Program-level boundary breached: force an explicit re-commitment now."
-            if roll["boundary_breached"]
-            else "Program within boundary."
-        )
         facts = (
             f"Program: {proj.name}. {len(children)} sub-projects. "
             f"Sub-project money committed totals EUR {int(roll['totals']['money_committed']):,} "
-            f"against a program boundary of EUR {int(roll['program_boundary']['money_committed']):,}."
+            f"against a program boundary of EUR {int(roll['program_boundary']['money_committed']):,}. "
+            f"Boundary breached: {roll['boundary_breached']}."
         )
         tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
 
     elif key == "sony":
-        views = []
-        for sh in proj.stakeholders:
-            tiers = {
-                "money": sh.money_tier, "time": sh.time_tier,
-                "reputation": sh.reputation_tier, "relationships": sh.relationships_tier,
-                "reversibility": sh.reversibility_tier,
-            }
-            views.append({"name": sh.name, "role": sh.role,
-                          "overall_tier": status_engine._worst(*tiers.values()),
-                          "tiers": tiers})
+        verdict, views = status_engine.stakeholder_verdict(proj.stakeholders)
+        tool["verdict"] = verdict
         tool["stakeholder_views"] = views
-        tool["verdict"] = (
-            "Different stakes per person: the sponsor can absorb a loss the team cannot, "
-            "so the continue decision belongs to the sponsor."
-        )
         facts = (
             f"Project: {proj.name}. Stakeholders and their overall affordable-loss tier: "
-            + "; ".join(f"{v['name']} ({v['role']}) = {v['overall_tier']}" for v in views)
+            + "; ".join(f"{v['name']} ({v['role']}) = {v['overall_tier']}, "
+                        f"money exposure {v['money_tier']}" for v in views)
         )
         tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
 

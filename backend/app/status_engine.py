@@ -149,6 +149,104 @@ def evaluate(p: Project) -> dict:
     }
 
 
+def _eur(n: float) -> str:
+    n = int(round(n or 0))
+    return f"€{n/1000:.0f}k" if abs(n) >= 1000 else f"€{n}"
+
+
+def single_verdict(p: Project, status: dict) -> str:
+    """Data-driven keep / re-commit / shrink verdict for a single project.
+
+    Reads the live numbers so it changes when the project changes. No fixed text.
+    """
+    money = status["dimensions"]["money"]
+    spent, committed = money.get("spent") or 0, money.get("committed") or 0
+    overall = status["overall_tier"]
+
+    if status["recommit_required"]:
+        why = status["recommit_reasons"][0] if status["recommit_reasons"] else ""
+        return f"Re-commitment needed before more work. {why}"
+    if overall in ("Low", "Medium"):
+        return (
+            f"Affordable bet: {_eur(committed)} on the table over "
+            f"{p.time_committed_weeks:g} weeks, {_eur(spent)} spent so far. "
+            "Keep it and run the smallest test."
+        )
+    return (
+        f"This is now a {overall.lower()}-exposure bet ({_eur(committed)} committed). "
+        "Shrink it or make an explicit go/no-go."
+    )
+
+
+def portfolio_verdict(parent: Project, children: list[Project]) -> tuple[str, dict]:
+    """Data-driven program verdict from the live rollup. Reports whichever
+    dimension actually breached (money and/or time), so it tracks edits."""
+    roll = rollup(parent, children)
+    money_total = roll["totals"]["money_committed"]
+    money_boundary = roll["program_boundary"]["money_committed"]
+    time_total = roll["totals"]["time_committed_weeks"]
+    time_boundary = roll["program_boundary"]["time_committed_weeks"]
+    money_over = money_boundary > 0 and money_total > money_boundary
+    time_over = time_boundary > 0 and time_total > time_boundary
+
+    if roll["boundary_breached"]:
+        parts = []
+        if money_over:
+            parts.append(f"money {_eur(money_total)} of {_eur(money_boundary)}")
+        if time_over:
+            parts.append(f"time {time_total:g} of {time_boundary:g} weeks")
+        verdict = (
+            "Program boundary breached (" + "; ".join(parts) + "). "
+            "Force an explicit re-commitment now."
+        )
+    else:
+        verdict = (
+            f"Within boundary: money {_eur(money_total)} of {_eur(money_boundary)}, "
+            f"time {time_total:g} of {time_boundary:g} weeks. Keep tracking the rollup."
+        )
+    return verdict, roll
+
+
+def stakeholder_verdict(stakeholders: list) -> tuple[str, list]:
+    """Data-driven multi-stakeholder verdict from each person's live tiers."""
+    views = []
+    for sh in stakeholders:
+        tiers = {
+            "money": sh.money_tier, "time": sh.time_tier,
+            "reputation": sh.reputation_tier, "relationships": sh.relationships_tier,
+            "reversibility": sh.reversibility_tier,
+        }
+        views.append({
+            "name": sh.name, "role": sh.role,
+            "overall_tier": _worst(*tiers.values()),
+            "money_tier": sh.money_tier,
+            "tiers": tiers,
+        })
+    team = next((v for v in views if v["role"] == "Team"), None)
+    sponsor = next((v for v in views if v["role"] == "Sponsor"), None)
+    if team and sponsor:
+        ts, ss = TIER_ORDER[team["money_tier"]], TIER_ORDER[sponsor["money_tier"]]
+        if ss > ts:
+            verdict = (
+                f"{sponsor['name']} can absorb more money loss ({sponsor['money_tier']}) "
+                f"than {team['name']} ({team['money_tier']}). The continue decision "
+                f"belongs to {sponsor['name']}, not the team."
+            )
+        elif ss < ts:
+            verdict = (
+                f"{team['name']} now carries more money exposure than {sponsor['name']}. "
+                "The team is over-committed; the sponsor must step in before more is spent."
+            )
+        else:
+            verdict = (
+                f"{team['name']} and {sponsor['name']} carry the same money exposure. "
+                "Align on who owns the continue decision before proceeding."
+            )
+    else:
+        verdict = "Each stakeholder carries a different loss profile; do not average them."
+    return verdict, views
+
+
 # --- portfolio rollup (the Google case) ---------------------------------------
 
 def rollup(parent: Project, children: list[Project]) -> dict:
