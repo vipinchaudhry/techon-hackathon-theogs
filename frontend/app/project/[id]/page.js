@@ -161,7 +161,9 @@ export default function ProjectPage() {
 function PortfolioView({ projectId, graph, children, onChanged }) {
   const [selected, setSelected] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [view, setView] = useState("graph"); // "graph" | "tree"
   const t = graph.totals;
+  const center = graph.nodes.find((n) => n.is_center);
 
   return (
     <>
@@ -202,10 +204,23 @@ function PortfolioView({ projectId, graph, children, onChanged }) {
             <span className="muted">net {fmtEur(t.pnl_eur)}</span>
           </div>
         </div>
-        <p className="small muted" style={{ marginTop: 0 }}>
-          Each node is a project. Bigger node means more money committed. Click one to see it.
-        </p>
-        <PortfolioGraph graph={graph} selectedId={selected?.id} onSelect={setSelected} />
+
+        <div className="seg">
+          <button className={view === "graph" ? "active" : ""} onClick={() => setView("graph")}>Graph</button>
+          <button className={view === "tree" ? "active" : ""} onClick={() => setView("tree")}>Tree</button>
+        </div>
+
+        {view === "graph" && (
+          <>
+            <p className="small muted" style={{ marginTop: 0 }}>
+              Each node is a project. Bigger node means more money committed. Click one to see it.
+            </p>
+            <PortfolioGraph graph={graph} selectedId={selected?.id} onSelect={setSelected} />
+          </>
+        )}
+        {view === "tree" && (
+          <PortfolioTree center={center} nodes={graph.nodes} selectedId={selected?.id} onSelect={setSelected} />
+        )}
 
         {selected && !selected.is_center && (
           <div className="card" style={{ background: "var(--panel-2)", marginTop: 8 }}>
@@ -450,6 +465,52 @@ function ConcernAnalyzer({ parentId, onAdded, onBack }) {
 
 function Dot({ c }) {
   return <span style={{ width: 9, height: 9, borderRadius: 9, background: c, display: "inline-block" }} />;
+}
+
+// File-structure / `tree`-style view: expandable parent folder with sub-projects
+// under it, each row prefixed by a connector and a left guide line per level.
+function PortfolioTree({ center, nodes, selectedId, onSelect }) {
+  const [open, setOpen] = useState(true);
+  const subs = nodes.filter((n) => !n.is_center);
+  const colorFor = (n) =>
+    n.pnl_eur == null ? "#c2c7d0" : n.pnl_eur >= 0 ? "#34c759" : "#f15a4a";
+
+  return (
+    <div className="tree">
+      <div className="tree-row folder" onClick={() => setOpen((o) => !o)}>
+        <span className="tw">{open ? "▾" : "▸"}</span>
+        <span className="ti">🗂</span>
+        <span className="tn">{center?.name}</span>
+        <span className="tmeta muted">{subs.length} sub-projects</span>
+      </div>
+
+      {open && (
+        <div className="tree-children">
+          {subs.map((n, i) => {
+            const last = i === subs.length - 1;
+            return (
+              <div
+                key={n.id}
+                className={`tree-row leaf ${selectedId === n.id ? "sel" : ""}`}
+                onClick={() => onSelect && onSelect(n)}
+              >
+                <span className="guide">{last ? "└─" : "├─"}</span>
+                <span className="tdot" style={{ background: colorFor(n) }} />
+                <span className="tn">{n.name}</span>
+                <span className="tmeta">
+                  {n.pnl_eur == null ? (
+                    <span className="muted">no forecast</span>
+                  ) : (
+                    <span style={{ color: colorFor(n), fontWeight: 600 }}>{fmtEur(n.pnl_eur)}</span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function StakeholderPanel({ projectId, stakeholders, asView, setAsView }) {

@@ -26,84 +26,36 @@ def _audit(project: Project, action: str, detail: str, actor: str = "system", da
 
 
 def seed_kodak(db: Session) -> Project:
-    """Kodak as a project portfolio: one program with 10 project nodes.
-
-    Each node carries a profit/loss number. Green = in profit, red = in loss.
-    This is the manager view: see the whole portfolio at a glance as a graph.
-    """
-    program = Project(
-        name="Kodak Portfolio",
+    """Kodak: a single decision. Reframe ROI into Affordable Loss and produce a
+    concrete first step. No sub-projects, this is the one bet to focus on."""
+    k = Project(
+        name="Kodak — Filmless (Digital) Camera",
         description=(
-            "Kodak's bets across film and digital. Each node is a project. Green nodes "
-            "make money, red nodes lose it. The question is which bets we can afford."
+            "Steven Sasson's prototype digital camera. Executives keep asking what the "
+            "expected return is and how much revenue a filmless camera would bring, "
+            "which makes it look like a way to destroy the film business."
         ),
-        owner="Kodak Leadership",
+        owner="Steven Sasson",
         status="Active",
         uncertainty_type="Market",
-        money_committed=3_000_000,
-        money_spent=0,
-        time_committed_weeks=1_200,
-        time_spent_weeks=0,
+        money_committed=50_000,
+        money_spent=5_000,
+        time_committed_weeks=12,
+        time_spent_weeks=2,
         reputation_tier="Medium",
         relationships_tier="Low",
         reversibility_tier="Low",
-        hypothesis="A balanced portfolio funds digital exploration from film profits.",
-        smallest_test="Track each project's profit/loss and affordable loss monthly.",
-        contact_person="Each project owner",
-        contact_question="Is this project still within what we can afford to lose?",
-        signal_keep="Film profits cover the digital bets we choose to keep.",
-        signal_stop="Loss-making bets exceed what the portfolio can absorb.",
+        hypothesis="A small group of photographers would value instant, filmless images enough to pay.",
+        smallest_test="Show the prototype to 5 pro photographers and 2 retail buyers.",
+        contact_person="A pro wedding photographer and one camera-store buyer",
+        contact_question="If this were filmless, what would make it useful enough to switch?",
+        signal_keep="At least 3 of 7 ask to try it on a real job.",
+        signal_stop="All 7 say film quality is non-negotiable for years.",
         reevaluation_date=date.today() + timedelta(days=21),
     )
-    db.add(program)
-    db.flush()
-
-    # (name, pnl_eur, money_committed, money_spent, weeks_committed, weeks_spent,
-    #  reputation, uncertainty, status)
-    nodes = [
-        ("Color Film (consumer)", 1_400_000, 200_000, 180_000, 60, 58, "Low", "Market", "Active"),
-        ("Film Processing Labs", 820_000, 150_000, 140_000, 80, 78, "Low", "Resource", "Active"),
-        ("Photo Paper", 360_000, 90_000, 85_000, 50, 48, "Low", "Market", "Active"),
-        ("Single-Use Cameras", 240_000, 70_000, 60_000, 40, 35, "Low", "Market", "Active"),
-        ("Digital Camera (Sasson)", -180_000, 50_000, 48_000, 12, 11, "Medium", "Market", "Active"),
-        ("DSLR Prototype", -260_000, 120_000, 118_000, 90, 88, "High", "Technology", "Active"),
-        ("Inkjet Printers", -140_000, 110_000, 90_000, 60, 40, "Medium", "Technology", "Active"),
-        ("Online Photo Sharing", -90_000, 80_000, 60_000, 30, 22, "Medium", "Market", "Active"),
-        ("Kiosk Printing", 60_000, 40_000, 30_000, 25, 20, "Low", "Resource", "Active"),
-        ("Chemicals Division", 510_000, 130_000, 120_000, 70, 68, "Low", "Resource", "Active"),
-    ]
-    for (name, pnl, mc, ms, tc, ts, rep, unc, st) in nodes:
-        losing = pnl < 0
-        child = Project(
-            name=name,
-            description=(
-                f"{name}: currently {'losing' if losing else 'making'} money "
-                f"(EUR {pnl:,}). Part of the Kodak portfolio."
-            ),
-            owner="Project owner",
-            status=st,
-            parent_id=program.id,
-            uncertainty_type=unc,
-            money_committed=mc,
-            money_spent=ms,
-            time_committed_weeks=tc,
-            time_spent_weeks=ts,
-            reputation_tier=rep,
-            relationships_tier="Low",
-            reversibility_tier="Medium" if losing else "Low",
-            pnl_eur=pnl,
-            hypothesis=f"{name} earns its place in the portfolio.",
-            smallest_test="Review this quarter's profit/loss against its affordable loss.",
-            contact_person="Project owner",
-            contact_question="What would tell us to double down or stop?",
-            signal_keep="Profit holds or the loss stays within what we can absorb.",
-            signal_stop="Loss grows past the affordable boundary.",
-            reevaluation_date=date.today() + timedelta(days=14),
-        )
-        db.add(child)
-
-    _audit(program, "created", "Seeded Kodak portfolio with 10 project nodes.", days_ago=3)
-    return program
+    _audit(k, "created", "Seeded Kodak digital camera case.", days_ago=3)
+    db.add(k)
+    return k
 
 
 def seed_google(db: Session) -> Project:
@@ -137,20 +89,25 @@ def seed_google(db: Session) -> Project:
     db.flush()  # get program.id
 
     # A spread of sub-projects. Together they OVER-COMMIT the program boundary,
-    # even though each one alone looks fine — the silent-erosion signal.
+    # even though each one alone looks fine. Green = in profit, red = in loss.
+    # (name, pnl_eur, money_committed, money_spent, weeks_committed, weeks_spent, reputation)
     subs = [
-        ("Gmail", 400_000, 380_000, 400, 360, "Medium"),
-        ("Google News", 250_000, 240_000, 300, 290, "Low"),
-        ("AdSense", 500_000, 450_000, 350, 330, "High"),
-        ("Google Talk", 200_000, 180_000, 250, 240, "Low"),
-        ("Google Sky", 150_000, 120_000, 200, 180, "Low"),
-        ("Google Transit", 220_000, 200_000, 260, 250, "Low"),
-        ("Misc 20% (long tail)", 600_000, 520_000, 700, 650, "Medium"),
+        ("Gmail", 900_000, 400_000, 380_000, 400, 360, "Medium"),
+        ("AdSense", 1_200_000, 500_000, 450_000, 350, 330, "High"),
+        ("Google News", 120_000, 250_000, 240_000, 300, 290, "Low"),
+        ("Google Talk", -80_000, 200_000, 180_000, 250, 240, "Low"),
+        ("Google Sky", -60_000, 150_000, 120_000, 200, 180, "Low"),
+        ("Google Transit", 40_000, 220_000, 200_000, 260, 250, "Low"),
+        ("Misc 20% (long tail)", -210_000, 600_000, 520_000, 700, 650, "Medium"),
     ]
-    for name, mc, ms, tc, ts, rep in subs:
+    for name, pnl, mc, ms, tc, ts, rep in subs:
+        losing = pnl < 0
         child = Project(
-            name=f"20% — {name}",
-            description=f"A 20%-time project: {name}.",
+            name=name,
+            description=(
+                f"A 20%-time project. Currently {'losing' if losing else 'making'} "
+                f"money (EUR {pnl:,})."
+            ),
             owner="Various engineers",
             status="Active",
             parent_id=program.id,
@@ -162,6 +119,7 @@ def seed_google(db: Session) -> Project:
             reputation_tier=rep,
             relationships_tier="Low",
             reversibility_tier="Low",
+            pnl_eur=pnl,
             reevaluation_date=date.today() + timedelta(days=14),
         )
         db.add(child)
@@ -254,19 +212,19 @@ def seed_all(db: Session, force: bool = False) -> None:
 
 SCENARIOS = {
     "kodak": {
-        "title": "Kodak: The portfolio view",
-        "project_name": "Kodak Portfolio",
+        "title": "Kodak: Reframe the room",
+        "project_name": "Kodak — Filmless (Digital) Camera",
         "steps": [
-            {"title": "Ten bets, one map",
-             "narration": "Kodak ran many projects at once. Here they are as nodes. Green nodes make money, red nodes lose it. You see the whole portfolio in one glance."},
-            {"title": "Film pays, digital costs",
-             "narration": "The big green nodes are film. The red nodes are the digital bets: the Sasson camera, the DSLR, inkjet. They lose money now, but they are the future."},
             {"title": "The wrong question",
-             "narration": "Executives ask 'what is the ROI on the red nodes?' and want to cut them. But ROI is unknowable here. The real question is what we can afford to lose."},
-            {"title": "Affordable, not killable",
-             "narration": "Film profits easily cover the digital losses. Kept small, these red bets are affordable. Cutting them is what eventually sank the company."},
-            {"title": "What changes",
-             "narration": "The portfolio view turns 'kill the money-losers' into 'fund the future from the present.' That is the decision Kodak missed."},
+             "narration": "Executives ask: what is the expected return on a filmless camera? Against that question it looks like a way to destroy the film business. So they bury it."},
+            {"title": "The Navigator reframes",
+             "narration": "The tool replaces the ROI question with: what is the smallest amount we could put on the table to find out if digital is real, while staying genuinely fine if it fails?"},
+            {"title": "What is at stake",
+             "narration": "Money: 50k we can absorb. Time: 12 weeks. Reputation: Medium. Nothing here threatens the film business. The bet-the-company framing was an illusion."},
+            {"title": "A concrete next step",
+             "narration": "Not 'run an experiment.' Instead: show the prototype to 5 pro photographers and 2 retail buyers this month, and ask one specific question. Keep going if 3 of 7 want to try it on a real job."},
+            {"title": "Would it have changed 1976?",
+             "narration": "Yes. The decision stops being 'launch vs protect film' and becomes 'spend 50k to learn.' That is a decision executives can say yes to."},
         ],
     },
     "google": {
