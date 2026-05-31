@@ -283,13 +283,20 @@ def analyze_idea(idea: str, history: list[str] | None = None) -> dict:
             max_tokens=480,
         )
         out = _extract_json(raw)
-        # Safety net: if the four real fields are all present but the model still
-        # returned needs_input (e.g. it listed assessment dimensions as "missing", or
-        # stalled on a confirmation turn), force the assessment instead of looping.
-        if out.get("status") == "needs_input":
-            collected = out.get("collected") or {}
-            real_missing = [f for f in REQUIRED_FIELDS if collected.get(f) in (None, "")]
-            if not real_missing:
+        if not out:
+            return _mock_analyze(transcript)
+        if out.get("status") == "blocked":
+            return out
+
+        # Decide "missing" ourselves from collected, ignoring the model's own list
+        # (it sometimes lists assessment dimensions, or confirms when nothing is left).
+        collected = out.get("collected") or {}
+        real_missing = [f for f in REQUIRED_FIELDS if collected.get(f) in (None, "")]
+
+        # All four present but no verdict yet: force the assessment, retrying a
+        # couple of times before giving up.
+        if real_missing == [] and out.get("status") != "ready":
+            for _ in range(2):
                 forced = _call(
                     [
                         {"role": "system", "content": SYSTEM_PROMPT},
@@ -298,20 +305,26 @@ def analyze_idea(idea: str, history: list[str] | None = None) -> dict:
                         {"role": "user", "content":
                             "Name, goal, budget_eur and time_weeks are all present. The "
                             "five dimensions are for you to judge, not to ask about. Do "
-                            "not ask for confirmation. Return the final assessment now as "
-                            "the ready JSON object."},
+                            "not ask for confirmation. Return the final ready assessment "
+                            "JSON now."},
                     ],
                     max_tokens=480,
                 )
                 forced_out = _extract_json(forced)
                 if forced_out.get("status") == "ready":
                     return forced_out
-                # If the model still will not assess, surface only the real missing
-                # fields (none here) so the UI never asks for a dimension.
-                out["missing"] = real_missing
-        if out.get("status") in ("blocked", "needs_input", "ready"):
+                out = forced_out or out
+
+        if out.get("status") == "ready":
             return out
-        return _mock_analyze(transcript)
+        # Still gathering: only ever report genuinely missing required fields.
+        out["status"] = "needs_input"
+        out["collected"] = collected
+        out["missing"] = real_missing
+        if not out.get("question"):
+            key = real_missing[0] if real_missing else "name"
+            out["question"] = FIELD_PROMPTS.get(key, "Tell me a bit more about the project.")
+        return out
     except BudgetExceeded:
         raise
     except Exception:
