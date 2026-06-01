@@ -173,12 +173,3 @@ techon/
    ├─ components/          ← reused pieces (badges, loss profile, top bar)
    └─ lib/api.js           ← how the screens talk to the backend
 ```
-
----
-
-## 8. One-line pitch for the judges
-
-> "95% of corporate AI pilots fail — usually not because someone decided to stop
-> them, but because nobody decided anything. The Uncertainty Navigator makes the
-> *affordable loss* visible, forces an explicit keep-going/stop decision before a
-> project drifts, and gives the team a concrete next step instead of an ROI guess."
