@@ -587,12 +587,15 @@ function ConsultPanel({ projectId }) {
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
   const [consults, setConsults] = useState([]);
+  const [activeId, setActiveId] = useState(null); // selected session, or null = "new"
 
-  async function load() {
+  async function load(selectId) {
     try {
       const all = await api.consultations();
-      // show consults tied to this project (or portfolio-wide ones)
-      setConsults(all.filter((c) => c.project_id === Number(projectId) || c.project_id === null));
+      const mine = all.filter((c) => c.project_id === Number(projectId) || c.project_id === null);
+      setConsults(mine);
+      if (selectId !== undefined) setActiveId(selectId);
+      else if (activeId === null && mine.length) setActiveId(mine[0].id);
     } catch {}
   }
   useEffect(() => { load(); }, [projectId]);
@@ -601,9 +604,9 @@ function ConsultPanel({ projectId }) {
     if (!question.trim()) return;
     setBusy(true);
     try {
-      await api.consult(question.trim(), Number(projectId));
+      const r = await api.consult(question.trim(), Number(projectId));
       setQuestion("");
-      await load();
+      await load(r.consultation.id); // open the new session
     } catch (e) {
       alert("Consult failed: " + e.message);
     } finally {
@@ -611,81 +614,109 @@ function ConsultPanel({ projectId }) {
     }
   }
 
-  async function simulate(cid) { await api.simulateConsult(cid); await load(); }
+  const active = consults.find((c) => c.id === activeId) || null;
+  const newMode = activeId === null || !active;
 
   return (
     <div className="card" style={{ marginTop: 16 }}>
       <div className="row" style={{ marginBottom: 6 }}>
         <div className="chip amber"><IconClock /></div>
-        <h3 style={{ margin: 0 }}>Ask for advice &amp; a check-in</h3>
+        <h3 style={{ margin: 0 }}>Advice sessions</h3>
       </div>
-      <p className="small muted">
-        Describe an idea. The Navigator reviews this portfolio, suggests the smallest
-        affordable step, and remembers to check back in on your progress.
-      </p>
-      <div className="row">
-        <input
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && ask()}
-          placeholder='e.g. "Should we build a new digital camera? What do you think?"'
-        />
-        <button onClick={ask} disabled={busy || !question.trim()}>
-          {busy ? "Thinking..." : "Ask"}
+
+      {/* session switcher */}
+      <div className="pill-row" style={{ marginBottom: 10 }}>
+        {consults.map((c) => (
+          <button
+            key={c.id}
+            className={c.id === activeId ? "" : "secondary"}
+            onClick={() => setActiveId(c.id)}
+            title={c.question}
+          >
+            {c.title || c.question.slice(0, 24)}
+          </button>
+        ))}
+        <button
+          className={newMode ? "" : "secondary"}
+          onClick={() => setActiveId(null)}
+        >
+          + New session
         </button>
       </div>
 
-      {consults.map((c) => (
-        <div key={c.id} className="card" style={{ background: "var(--panel-2)", marginTop: 12 }}>
-          {/* AI title */}
-          {c.title && (
-            <div className="spread" style={{ marginBottom: 8 }}>
-              <strong>{c.title}</strong>
-              <span className="badge gray">{c.status === "checked_in" ? "in progress" : "advised"}</span>
-            </div>
-          )}
-
-          {/* full persistent conversation */}
-          <div className="chat-log" style={{ maxHeight: 280 }}>
-            {(c.messages || []).map((m, i) => (
-              <div key={i} className={`bubble ${m.role === "user" ? "user" : "bot"}`}>
-                {m.text}
-              </div>
-            ))}
+      {/* new session: ask a question */}
+      {newMode && (
+        <>
+          <p className="small muted">
+            Describe an idea. The Navigator reviews this portfolio, suggests the smallest
+            affordable step, and remembers to check back in on your progress.
+          </p>
+          <div className="row">
+            <input
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && ask()}
+              placeholder='e.g. "Should we build a new digital camera? What do you think?"'
+            />
+            <button onClick={ask} disabled={busy || !question.trim()}>
+              {busy ? "Thinking..." : "Ask"}
+            </button>
           </div>
+        </>
+      )}
 
-          {/* reply to keep the conversation going (before adoption is resolved) */}
-          {c.adoption === "pending" && c.status !== "checked_in" && !c.due && (
-            <ReplyRow consult={c} onDone={load} />
-          )}
+      {/* the selected session */}
+      {active && <ConsultSession consult={active} onChange={(id) => load(id ?? active.id)} />}
+    </div>
+  );
+}
 
-          {/* adoption resolved */}
-          {c.adoption === "adopted" && (
-            <span className="badge Low">Tracked as “{c.title}”</span>
-          )}
-          {c.adoption === "declined" && (
-            <span className="badge gray">Not tracked — {c.decline_reason || "declined"}</span>
-          )}
-
-          {/* still scheduled / due / checked-in flow */}
-          {c.adoption === "pending" && (
-            c.status === "checked_in" ? (
-              <AdoptRow consult={c} onDone={load} />
-            ) : c.due ? (
-              <CheckInRow consult={c} onDone={load} />
-            ) : (
-              <div className="spread" style={{ marginTop: 8 }}>
-                <span className="badge gray">
-                  Check-in in ~{Math.round(c.timeframe_weeks)} weeks
-                </span>
-                <button className="secondary" onClick={() => simulate(c.id)}>
-                  Simulate time passing
-                </button>
-              </div>
-            )
-          )}
+function ConsultSession({ consult: c, onChange }) {
+  async function simulate() { await api.simulateConsult(c.id); onChange(); }
+  return (
+    <div className="card" style={{ background: "var(--panel-2)", marginTop: 4 }}>
+      {c.title && (
+        <div className="spread" style={{ marginBottom: 8 }}>
+          <strong>{c.title}</strong>
+          <span className="badge gray">{c.status === "checked_in" ? "in progress" : "advised"}</span>
         </div>
-      ))}
+      )}
+
+      <div className="chat-log" style={{ maxHeight: 280 }}>
+        {(c.messages || []).map((m, i) => (
+          <div key={i} className={`bubble ${m.role === "user" ? "user" : "bot"}`}>
+            {m.text}
+          </div>
+        ))}
+      </div>
+
+      {c.adoption === "pending" && c.status !== "checked_in" && !c.due && (
+        <ReplyRow consult={c} onDone={() => onChange()} />
+      )}
+
+      {c.adoption === "adopted" && (
+        <span className="badge Low">Tracked as “{c.title}”</span>
+      )}
+      {c.adoption === "declined" && (
+        <span className="badge gray">Not tracked — {c.decline_reason || "declined"}</span>
+      )}
+
+      {c.adoption === "pending" && (
+        c.status === "checked_in" ? (
+          <AdoptRow consult={c} onDone={() => onChange()} />
+        ) : c.due ? (
+          <CheckInRow consult={c} onDone={() => onChange()} />
+        ) : (
+          <div className="spread" style={{ marginTop: 8 }}>
+            <span className="badge gray">
+              Check-in in ~{Math.round(c.timeframe_weeks)} weeks
+            </span>
+            <button className="secondary" onClick={simulate}>
+              Simulate time passing
+            </button>
+          </div>
+        )
+      )}
     </div>
   );
 }
