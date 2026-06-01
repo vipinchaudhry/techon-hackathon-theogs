@@ -3,7 +3,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Tier, LossProfile, Loading, ErrorBox, DimRow } from "../../../components/ui";
-import { IconScale, IconFlag, IconLayers, IconUsers, IconTarget } from "../../../components/icons";
+import { IconScale, IconFlag, IconLayers, IconUsers, IconTarget, IconClock } from "../../../components/icons";
 import { PortfolioGraph } from "../../../components/graph";
 
 const fmtEur = (n) => {
@@ -138,6 +138,9 @@ export default function ProjectPage() {
       {isPortfolio && rollup && (
         <RollupPanel rollup={rollup} children={children} />
       )}
+
+      {/* Consult: ask for advice, get a suggestion + a scheduled check-in */}
+      <ConsultPanel projectId={id} />
 
       {/* Ask the AI, with portfolio context */}
       <AskPanel projectId={id} onApplied={load} />
@@ -576,6 +579,133 @@ function RollupPanel({ rollup, children }) {
         <span className="k">Money (total)</span>
         <span>{fmtk(t.money_committed)} of {fmtk(b.money_committed)} budget {t.money_committed > b.money_committed ? "over" : "within"}</span>
       </div>
+    </div>
+  );
+}
+
+function ConsultPanel({ projectId }) {
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [consults, setConsults] = useState([]);
+
+  async function load() {
+    try {
+      const all = await api.consultations();
+      // show consults tied to this project (or portfolio-wide ones)
+      setConsults(all.filter((c) => c.project_id === Number(projectId) || c.project_id === null));
+    } catch {}
+  }
+  useEffect(() => { load(); }, [projectId]);
+
+  async function ask() {
+    if (!question.trim()) return;
+    setBusy(true);
+    try {
+      await api.consult(question.trim(), Number(projectId));
+      setQuestion("");
+      await load();
+    } catch (e) {
+      alert("Consult failed: " + e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function simulate(cid) { await api.simulateConsult(cid); await load(); }
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="row" style={{ marginBottom: 6 }}>
+        <div className="chip amber"><IconClock /></div>
+        <h3 style={{ margin: 0 }}>Ask for advice &amp; a check-in</h3>
+      </div>
+      <p className="small muted">
+        Describe an idea. The Navigator reviews this portfolio, suggests the smallest
+        affordable step, and remembers to check back in on your progress.
+      </p>
+      <div className="row">
+        <input
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && ask()}
+          placeholder='e.g. "Should we build a new digital camera? What do you think?"'
+        />
+        <button onClick={ask} disabled={busy || !question.trim()}>
+          {busy ? "Thinking..." : "Ask"}
+        </button>
+      </div>
+
+      {consults.map((c) => (
+        <div key={c.id} className="card" style={{ background: "var(--panel-2)", marginTop: 12 }}>
+          <div className="small muted">You asked</div>
+          <div style={{ marginBottom: 8 }}>{c.question}</div>
+          <div className="small muted">Suggestion</div>
+          <div style={{ marginBottom: 8 }}>{c.suggestion}</div>
+          {c.status === "checked_in" ? (
+            <span className="badge Low">Checked in</span>
+          ) : c.due ? (
+            <CheckInRow consult={c} onDone={load} />
+          ) : (
+            <div className="spread">
+              <span className="badge gray">
+                Check-in in ~{Math.round(c.timeframe_weeks)} weeks
+              </span>
+              <button className="secondary" onClick={() => simulate(c.id)}>
+                Simulate time passing
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CheckInRow({ consult, onDone }) {
+  const [reachOut, setReachOut] = useState(null);
+  const [progress, setProgress] = useState("");
+  const [reply, setReply] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function fetchReachOut() {
+    setBusy(true);
+    try {
+      const r = await api.checkIn(consult.id, "");
+      setReachOut(r.reach_out);
+    } finally { setBusy(false); }
+  }
+  useEffect(() => { fetchReachOut(); }, []);
+
+  async function send() {
+    if (!progress.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.checkIn(consult.id, progress.trim());
+      setReply(r.reply);
+      if (onDone) onDone();
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div>
+      <div className="alert warn" style={{ marginBottom: 8 }}>
+        <strong>Check-in due.</strong> {reachOut || "..."}
+      </div>
+      {reply ? (
+        <div className="alert ok">{reply}</div>
+      ) : (
+        <div className="row">
+          <input
+            value={progress}
+            onChange={(e) => setProgress(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+            placeholder="How's it going? Share your progress..."
+          />
+          <button onClick={send} disabled={busy || !progress.trim()}>
+            {busy ? "..." : "Reply"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -42,6 +42,17 @@ export const api = {
   clearChat: (project_id) =>
     req(`/projects/${project_id}/chat`, { method: "DELETE" }),
 
+  consult: (question, project_id = null) =>
+    req("/consult", { method: "POST", body: JSON.stringify({ question, project_id }) }),
+  consultations: () => req("/consultations"),
+  simulateConsult: (cid) =>
+    req(`/consultations/${cid}/simulate`, { method: "POST" }),
+  checkIn: (cid, progress = "") =>
+    req(`/consultations/${cid}/checkin`, {
+      method: "POST",
+      body: JSON.stringify({ progress }),
+    }),
+
   analyze: (idea, history = []) =>
     req("/analyze", { method: "POST", body: JSON.stringify({ idea, history }) }),
 
