@@ -637,23 +637,39 @@ function ConsultPanel({ projectId }) {
 
       {consults.map((c) => (
         <div key={c.id} className="card" style={{ background: "var(--panel-2)", marginTop: 12 }}>
-          <div className="small muted">You asked</div>
-          <div style={{ marginBottom: 8 }}>{c.question}</div>
-          <div className="small muted">Suggestion</div>
-          <div style={{ marginBottom: 8 }}>{c.suggestion}</div>
-          {c.status === "checked_in" ? (
-            <span className="badge Low">Checked in</span>
-          ) : c.due ? (
-            <CheckInRow consult={c} onDone={load} />
-          ) : (
-            <div className="spread">
-              <span className="badge gray">
-                Check-in in ~{Math.round(c.timeframe_weeks)} weeks
-              </span>
-              <button className="secondary" onClick={() => simulate(c.id)}>
-                Simulate time passing
-              </button>
-            </div>
+          {/* full persistent conversation */}
+          <div className="chat-log" style={{ maxHeight: 260 }}>
+            {(c.messages || []).map((m, i) => (
+              <div key={i} className={`bubble ${m.role === "user" ? "user" : "bot"}`}>
+                {m.text}
+              </div>
+            ))}
+          </div>
+
+          {/* adoption resolved */}
+          {c.adoption === "adopted" && (
+            <span className="badge Low">Added as a tracked project</span>
+          )}
+          {c.adoption === "declined" && (
+            <span className="badge gray">Not tracked — {c.decline_reason || "declined"}</span>
+          )}
+
+          {/* still scheduled / due / checked-in flow */}
+          {c.adoption === "pending" && (
+            c.status === "checked_in" ? (
+              <AdoptRow consult={c} onDone={load} />
+            ) : c.due ? (
+              <CheckInRow consult={c} onDone={load} />
+            ) : (
+              <div className="spread">
+                <span className="badge gray">
+                  Check-in in ~{Math.round(c.timeframe_weeks)} weeks
+                </span>
+                <button className="secondary" onClick={() => simulate(c.id)}>
+                  Simulate time passing
+                </button>
+              </div>
+            )
           )}
         </div>
       ))}
@@ -662,50 +678,80 @@ function ConsultPanel({ projectId }) {
 }
 
 function CheckInRow({ consult, onDone }) {
-  const [reachOut, setReachOut] = useState(null);
   const [progress, setProgress] = useState("");
-  const [reply, setReply] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  async function fetchReachOut() {
-    setBusy(true);
-    try {
-      const r = await api.checkIn(consult.id, "");
-      setReachOut(r.reach_out);
-    } finally { setBusy(false); }
-  }
-  useEffect(() => { fetchReachOut(); }, []);
+  // The bot's reach-out is already persisted as a message, so just collect progress.
+  useEffect(() => { api.checkIn(consult.id, "").then(() => onDone && onDone()); }, []);
 
   async function send() {
     if (!progress.trim()) return;
     setBusy(true);
     try {
-      const r = await api.checkIn(consult.id, progress.trim());
-      setReply(r.reply);
+      await api.checkIn(consult.id, progress.trim());
       if (onDone) onDone();
     } finally { setBusy(false); }
   }
 
   return (
-    <div>
-      <div className="alert warn" style={{ marginBottom: 8 }}>
-        <strong>Check-in due.</strong> {reachOut || "..."}
+    <div className="row">
+      <input
+        value={progress}
+        onChange={(e) => setProgress(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && send()}
+        placeholder="How's it going? Share your progress..."
+      />
+      <button onClick={send} disabled={busy || !progress.trim()}>
+        {busy ? "..." : "Reply"}
+      </button>
+    </div>
+  );
+}
+
+function AdoptRow({ consult, onDone }) {
+  const [mode, setMode] = useState(null); // null | "decline"
+  const [name, setName] = useState(consult.question.slice(0, 60));
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function adopt() {
+    setBusy(true);
+    try {
+      await api.adoptConsult(consult.id, { decision: "yes", name });
+      if (onDone) onDone();
+    } finally { setBusy(false); }
+  }
+  async function decline() {
+    setBusy(true);
+    try {
+      await api.adoptConsult(consult.id, { decision: "no", reason });
+      if (onDone) onDone();
+    } finally { setBusy(false); }
+  }
+
+  if (mode === "decline") {
+    return (
+      <div className="row">
+        <input
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && decline()}
+          placeholder="Why not track it? (saved on record)"
+        />
+        <button onClick={decline} disabled={busy}>{busy ? "..." : "Save reason"}</button>
       </div>
-      {reply ? (
-        <div className="alert ok">{reply}</div>
-      ) : (
-        <div className="row">
-          <input
-            value={progress}
-            onChange={(e) => setProgress(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && send()}
-            placeholder="How's it going? Share your progress..."
-          />
-          <button onClick={send} disabled={busy || !progress.trim()}>
-            {busy ? "..." : "Reply"}
-          </button>
-        </div>
-      )}
+    );
+  }
+  return (
+    <div>
+      <div className="row" style={{ marginBottom: 6 }}>
+        <input value={name} onChange={(e) => setName(e.target.value)}
+          placeholder="Project name to track" />
+      </div>
+      <div className="row">
+        <button onClick={adopt} disabled={busy}>{busy ? "..." : "Yes, track it"}</button>
+        <button className="secondary" onClick={() => setMode("decline")}>No</button>
+      </div>
     </div>
   );
 }

@@ -74,10 +74,16 @@ def cost() -> dict:
 
 @app.post("/reset")
 def reset(db: Session = Depends(get_db)) -> dict:
-    """Wipe and re-seed the three case studies. Handy between demo runs."""
+    """Wipe and re-seed the three case studies. Handy between demo runs.
+
+    Also clears consultations and their messages so the demo starts clean.
+    """
+    for c in db.scalars(select(Consultation)).all():
+        db.delete(c)
+    db.commit()
     seed.seed_all(db, force=True)
     store.export_json(db)
-    return {"ok": True, "message": "Re-seeded Kodak, Google, Sony."}
+    return {"ok": True, "message": "Re-seeded Kodak, Google, Sony; cleared consults."}
 
 
 @app.get("/data")
