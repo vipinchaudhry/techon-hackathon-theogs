@@ -7,7 +7,7 @@ Run from the backend/ folder:
 Interactive API docs: http://localhost:8000/docs
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from . import config, llm, schemas, seed, status_engine, store
 from .db import Base, SessionLocal, engine, get_db
-from .models import AuditLog, ChatMessage, Project
+from .models import AuditLog, ChatMessage, Consultation, Project
 
 # Project fields the navigator (or a manual edit) may change.
 EDITABLE_FIELDS = (
@@ -315,16 +315,34 @@ def _portfolio_context(parent: Project, children: list[Project]) -> str:
     """A short text snapshot of a portfolio the LLM can reason over."""
     lines = [f"Program: {parent.name}. {parent.description}"]
     for c in children:
-        state = "PROFIT" if c.pnl_eur >= 0 else "LOSS"
+        state = "no forecast" if c.pnl_eur is None else ("PROFIT" if c.pnl_eur >= 0 else "LOSS")
+        pnl = "" if c.pnl_eur is None else f" EUR {int(c.pnl_eur):,}"
         lines.append(
-            f"- {c.name}: {state} EUR {int(c.pnl_eur):,}; "
+            f"- {c.name}: {state}{pnl}; "
             f"committed EUR {int(c.money_committed):,}, spent EUR {int(c.money_spent):,}; "
             f"reputation {c.reputation_tier}; uncertainty {c.uncertainty_type}; "
             f"status {c.status}."
         )
-    total = sum(c.pnl_eur for c in children)
+    total = sum(c.pnl_eur for c in children if c.pnl_eur is not None)
     lines.append(f"Total portfolio profit/loss: EUR {int(total):,}.")
     return "\n".join(lines)
+
+
+def _whole_portfolio_snapshot(db: Session) -> str:
+    """A snapshot of EVERY top-level project, for a portfolio-wide consult."""
+    tops = db.scalars(select(Project).where(Project.parent_id.is_(None))).all()
+    lines = []
+    for p in tops:
+        kids = list(db.scalars(select(Project).where(Project.parent_id == p.id)).all())
+        if kids:
+            lines.append(_portfolio_context(p, kids))
+        else:
+            lines.append(
+                f"Project: {p.name}. {p.description} "
+                f"Money committed EUR {int(p.money_committed):,}, "
+                f"spent EUR {int(p.money_spent):,}; status {p.status}."
+            )
+    return "\n\n".join(lines) or "No projects yet."
 
 
 @app.post("/ask")
@@ -415,6 +433,133 @@ def clear_chat(project_id: int, db: Session = Depends(get_db)) -> dict:
         db.delete(m)
     db.commit()
     return {"ok": True}
+
+
+# --- consult: ask for advice, get a suggestion + a scheduled check-in ---------
+
+def _is_due(check_in_at) -> bool:
+    """True if the check-in time has passed. Handles naive datetimes from SQLite."""
+    if not check_in_at:
+        return False
+    now = datetime.now(timezone.utc)
+    if check_in_at.tzinfo is None:  # SQLite returns naive; assume UTC
+        now = now.replace(tzinfo=None)
+    return check_in_at <= now
+
+
+def _consultation_dict(c: Consultation) -> dict:
+    return {
+        "id": c.id,
+        "project_id": c.project_id,
+        "question": c.question,
+        "suggestion": c.suggestion,
+        "timeframe_weeks": c.timeframe_weeks,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "check_in_at": c.check_in_at.isoformat() if c.check_in_at else None,
+        "handmedown": c.handmedown,
+        "status": c.status,
+        "due": bool(_is_due(c.check_in_at) and c.status == "scheduled"),
+    }
+
+
+@app.post("/consult")
+def consult(body: schemas.ConsultIn, db: Session = Depends(get_db)) -> dict:
+    """Ask 'what do you think about X?'. The Navigator reviews the portfolio,
+    gives an affordable-loss suggestion + a timeframe, caches it as a hand-me-down,
+    and schedules itself to check back in on progress."""
+    if body.project_id:
+        parent = _get_project(db, body.project_id)
+        kids = list(db.scalars(select(Project).where(Project.parent_id == parent.id)).all())
+        portfolio = _portfolio_context(parent, kids)
+    else:
+        portfolio = _whole_portfolio_snapshot(db)
+
+    result = llm.consult(body.question, portfolio)
+    weeks = float(result.get("timeframe_weeks") or 2)
+    c = Consultation(
+        project_id=body.project_id,
+        question=body.question,
+        suggestion=result.get("suggestion", ""),
+        timeframe_weeks=weeks,
+        check_in_at=datetime.now(timezone.utc) + timedelta(weeks=weeks),
+        handmedown=result.get("handmedown", ""),
+        status="scheduled",
+    )
+    db.add(c)
+    db.commit()
+    return {"consultation": _consultation_dict(c), "mock_mode": config.LLM_MOCK}
+
+
+@app.get("/consultations")
+def list_consultations(db: Session = Depends(get_db)) -> list[dict]:
+    """All consultations, newest first, each flagged `due` if its check-in arrived."""
+    rows = db.scalars(select(Consultation).order_by(Consultation.id.desc())).all()
+    return [_consultation_dict(c) for c in rows]
+
+
+@app.post("/consultations/{cid}/simulate")
+def simulate_consult_time(cid: int, db: Session = Depends(get_db)) -> dict:
+    """Demo control: jump the clock to this consult's check-in date so it is due now."""
+    c = db.get(Consultation, cid)
+    if not c:
+        raise HTTPException(404, "Consultation not found")
+    c.check_in_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    db.commit()
+    return {"consultation": _consultation_dict(c)}
+
+
+@app.post("/consultations/{cid}/checkin")
+def check_in(cid: int, body: schemas.CheckInIn, db: Session = Depends(get_db)) -> dict:
+    """The check-in: the Navigator wakes, reads its cached hand-me-down (no
+    re-analysis), and asks/answers about progress. Cheap by design."""
+    c = db.get(Consultation, cid)
+    if not c:
+        raise HTTPException(404, "Consultation not found")
+
+    if not body.progress:
+        # The bot reaching out: it uses the cached hand-me-down, not a fresh analysis.
+        prompt = (
+            f"Two weeks ago you advised: {c.handmedown}\n"
+            f"Reach out to check on progress. One or two short sentences, friendly, "
+            f"ask how it is going and remind them of the affordable-loss signal to "
+            f"watch. No ROI, no em dashes."
+        )
+        try:
+            msg = llm._call(
+                [{"role": "system", "content": llm.SYSTEM_PROMPT},
+                 {"role": "user", "content": prompt}],
+                max_tokens=120,
+            ).strip() if not config.LLM_MOCK else (
+                f"Checking in on '{c.question}'. How is it going? Remember the plan: "
+                f"{c.handmedown}"
+            )
+        except Exception:
+            msg = (f"Checking in on '{c.question}'. How is it going? "
+                   f"Remember: {c.handmedown}")
+        return {"reach_out": msg, "consultation": _consultation_dict(c)}
+
+    # The user replied with progress -> advise next step from the hand-me-down.
+    prompt = (
+        f"Original plan (hand-me-down): {c.handmedown}\n"
+        f"Their progress now: {body.progress}\n"
+        f"Give the next affordable-loss step in 2-3 short sentences and whether to "
+        f"keep going or stop. No ROI, no em dashes."
+    )
+    try:
+        reply = llm._call(
+            [{"role": "system", "content": llm.SYSTEM_PROMPT},
+             {"role": "user", "content": prompt}],
+            max_tokens=200,
+        ).strip() if not config.LLM_MOCK else (
+            "Offline: if the smallest test gave a real signal, keep going and set the "
+            "next small milestone. If not, stop before spending more."
+        )
+    except Exception:
+        reply = "Keep going if the test gave a real signal; otherwise stop."
+    c.status = "checked_in"
+    c.handmedown = (c.handmedown + " | Update: " + body.progress)[:500]
+    db.commit()
+    return {"reply": reply, "consultation": _consultation_dict(c)}
 
 
 # --- add-node workflow: analyze a concern, then create a neutral node ----------

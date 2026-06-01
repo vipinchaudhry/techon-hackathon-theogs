@@ -109,6 +109,15 @@ class AnalyzeIn(BaseModel):
     history: list[str] = []
 
 
+class ConsultIn(BaseModel):
+    question: str
+    project_id: int | None = None  # optional: anchor the consult to one project
+
+
+class CheckInIn(BaseModel):
+    progress: str = ""  # the user's progress update at the check-in
+
+
 class AddNodeIn(BaseModel):
     parent_id: int
     name: str

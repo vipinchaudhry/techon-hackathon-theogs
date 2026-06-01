@@ -274,6 +274,65 @@ def detect_drift(text: str) -> dict:
         return _mock_drift(text)
 
 
+def consult(question: str, portfolio: str) -> dict:
+    """Advise on a new idea against the existing portfolio, the Affordable-Loss way.
+
+    Returns {suggestion, timeframe_weeks, handmedown}:
+      - suggestion: what to do, grounded in the portfolio, with a concrete next step
+      - timeframe_weeks: when to check back in on progress
+      - handmedown: a 1-2 sentence summary the follow-up check-in will read
+    """
+    if config.LLM_MOCK:
+        return {
+            "suggestion": (
+                "Offline mode. Reasoning from your portfolio: treat this as a small, "
+                "affordable probe, not a big bet. Set aside only what you can lose, run "
+                "the smallest test that gives a real signal, and name who you will talk "
+                "to this week."
+            ),
+            "timeframe_weeks": 2,
+            "handmedown": "Offline consult: start small, run the smallest test, "
+                          "check back in 2 weeks.",
+        }
+    instruction = (
+        "A manager is asking whether to pursue an idea. You have reviewed their "
+        "existing project portfolio (below). Advise them the Affordable-Loss way, "
+        "never ROI:\n"
+        "1) React to the idea in the context of what is already in the portfolio "
+        "(reference real projects by name where relevant).\n"
+        "2) Recommend the smallest affordable first step, not a big commitment.\n"
+        "3) Give a concrete next action and what signal would say keep going vs stop.\n"
+        "4) Pick a sensible timeframe in weeks to check back in on progress.\n"
+        "Respond with ONLY JSON: {\"suggestion\": \"3-5 short sentences\", "
+        "\"timeframe_weeks\": <number>, \"handmedown\": \"1-2 sentence summary a future "
+        "check-in can read instead of re-analysing\"}. No ROI, no em dashes.\n\n"
+        f"PORTFOLIO:\n{portfolio}\n\nMANAGER'S QUESTION:\n{question}"
+    )
+    try:
+        raw = _call(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": instruction},
+            ],
+            max_tokens=400,
+        )
+        out = _extract_json(raw)
+        if out.get("suggestion"):
+            out.setdefault("timeframe_weeks", 2)
+            out.setdefault("handmedown", out["suggestion"][:200])
+            return out
+    except BudgetExceeded:
+        raise
+    except Exception:
+        pass
+    return {
+        "suggestion": "Treat this as a small affordable probe: risk only what you can "
+                      "lose, run the smallest test, and name who to talk to this week.",
+        "timeframe_weeks": 2,
+        "handmedown": "Start small, smallest test, check back in 2 weeks.",
+    }
+
+
 def converse(message: str, current: dict, context: str) -> dict:
     """Unified navigator turn: BOTH adjust parameters AND answer with concrete,
     resource-based estimates. Returns {updates: {field: abs_value}, reply: str}.

@@ -154,3 +154,32 @@ class ChatMessage(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     role: Mapped[str] = mapped_column(String(10))  # "user" | "bot"
     text: Mapped[str] = mapped_column(Text, default="")
+
+
+class Consultation(Base):
+    """A 'what do you think about X?' consult: the user's question, the
+    Navigator's affordable-loss suggestion, a suggested timeframe, and the date
+    it will check back in on progress.
+
+    The suggestion is cached as a hand-me-down so the follow-up check-in reads it
+    instead of re-analysing from scratch.
+    """
+
+    __tablename__ = "consultations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    question: Mapped[str] = mapped_column(Text, default="")
+    suggestion: Mapped[str] = mapped_column(Text, default="")
+    timeframe_weeks: Mapped[float] = mapped_column(Float, default=2.0)
+    check_in_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # The hand-me-down summary the follow-up check-in will read.
+    handmedown: Mapped[str] = mapped_column(Text, default="")
+    # Status of the check-in loop: "scheduled" | "checked_in" | "closed".
+    status: Mapped[str] = mapped_column(String(20), default="scheduled")
