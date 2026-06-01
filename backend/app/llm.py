@@ -19,21 +19,62 @@ import httpx
 
 from . import config
 
-# --- crude spend tracker (process-lifetime; resets on restart) -----------------
+# --- spend + savings tracker (process-lifetime; resets on restart) -------------
 # Rough price floor for the cheap test models, in USD per 1M tokens.
 _PRICE_PER_MTOK = 0.30
 _spent_usd = 0.0
+_saved_usd = 0.0          # money NOT spent because of cache hits
+_tokens_spent = 0
+_tokens_saved = 0
+_calls_made = 0           # real API calls
+_cache_hits = 0           # answers served from cache (zero cost)
 
 
 def spent_usd() -> float:
     return round(_spent_usd, 4)
 
 
-def _track(prompt_chars: int, completion_chars: int) -> None:
-    global _spent_usd
+def cost_report() -> dict:
+    """The tool's own affordable loss: token budget, spend, and savings.
+
+    This is the proof that the Navigator applies Affordable Loss to itself:
+    arithmetic stays in code (free), and repeated questions are served from the
+    GPTCache instead of burning tokens.
+    """
+    total_calls = _calls_made + _cache_hits
+    hit_rate = (_cache_hits / total_calls) if total_calls else 0.0
+    return {
+        "token_budget_usd": config.LLM_TEST_BUDGET_USD,
+        "spent_usd": round(_spent_usd, 4),
+        "saved_usd": round(_saved_usd, 4),
+        "tokens_spent": int(_tokens_spent),
+        "tokens_saved": int(_tokens_saved),
+        "api_calls": _calls_made,
+        "cache_hits": _cache_hits,
+        "cache_hit_rate": round(hit_rate, 2),
+    }
+
+
+def _tokens_for(prompt_chars: int, completion_chars: int) -> int:
     # ~4 chars per token, both directions.
-    tokens = (prompt_chars + completion_chars) / 4
+    return int((prompt_chars + completion_chars) / 4)
+
+
+def _track(prompt_chars: int, completion_chars: int) -> None:
+    global _spent_usd, _tokens_spent, _calls_made
+    tokens = _tokens_for(prompt_chars, completion_chars)
+    _tokens_spent += tokens
+    _calls_made += 1
     _spent_usd += (tokens / 1_000_000) * _PRICE_PER_MTOK
+
+
+def _track_saved(prompt_chars: int, completion_chars: int) -> None:
+    """Record a cache hit: the tokens/cost we would have paid but did not."""
+    global _saved_usd, _tokens_saved, _cache_hits
+    tokens = _tokens_for(prompt_chars, completion_chars)
+    _tokens_saved += tokens
+    _cache_hits += 1
+    _saved_usd += (tokens / 1_000_000) * _PRICE_PER_MTOK
 
 
 class BudgetExceeded(Exception):
@@ -49,11 +90,65 @@ SYSTEM_PROMPT = (
 )
 
 
+# --- GPTCache: serve repeated prompts for zero tokens -------------------------
+# Exact-match map cache (no embeddings, no vector DB) so it is fast and reliable.
+# This is the Affordable-Loss principle applied to our own token budget: we never
+# pay twice for the same question.
+_cache = None
+
+
+def _get_cache():
+    global _cache
+    if _cache is not None:
+        return _cache
+    try:
+        import tempfile
+        from gptcache import Cache
+        from gptcache.processor.pre import get_prompt
+        from gptcache.manager import get_data_manager
+
+        c = Cache()
+        c.init(
+            pre_embedding_func=get_prompt,
+            data_manager=get_data_manager(data_path=tempfile.mktemp(prefix="navcache_")),
+        )
+        _cache = c
+    except Exception:
+        _cache = False  # caching unavailable; degrade gracefully
+    return _cache
+
+
+def _cache_key(messages: list[dict], max_tokens: int) -> str:
+    """The cache lookup string: the full prompt + token cap as one key."""
+    parts = [f"{m['role']}:{m['content']}" for m in messages]
+    return f"mt={max_tokens}\n" + "\n".join(parts)
+
+
 def _call(messages: list[dict], max_tokens: int = 500) -> str:
-    """Single OpenRouter chat call. Raises BudgetExceeded past the test budget."""
+    """Single OpenRouter chat call, with a GPTCache layer in front.
+
+    A repeated prompt is served from cache for ZERO tokens and ZERO cost; the
+    savings are recorded so the cost panel can show them.
+    """
     if config.LLM_MOCK:
         raise RuntimeError("LLM is in mock mode; callers must handle this.")
 
+    prompt_chars = sum(len(m["content"]) for m in messages)
+    key = _cache_key(messages, max_tokens)
+    cache = _get_cache()
+
+    # 1) try the cache
+    if cache:
+        try:
+            from gptcache.adapter.api import get as cache_get
+            cached = cache_get(key, cache_obj=cache)
+            if cached:
+                _track_saved(prompt_chars, len(cached))
+                return cached
+        except Exception:
+            pass
+
+    # 2) budget guard, then real API call
     if _spent_usd >= config.LLM_TEST_BUDGET_USD:
         raise BudgetExceeded(
             f"Test budget of ${config.LLM_TEST_BUDGET_USD} reached "
@@ -82,8 +177,16 @@ def _call(messages: list[dict], max_tokens: int = 500) -> str:
         resp.raise_for_status()
         data = resp.json()
     content = data["choices"][0]["message"]["content"]
-    prompt_chars = sum(len(m["content"]) for m in messages)
     _track(prompt_chars, len(content))
+
+    # 3) store for next time
+    if cache:
+        try:
+            from gptcache.adapter.api import put as cache_put
+            cache_put(key, content, cache_obj=cache)
+        except Exception:
+            pass
+
     return content
 
 
@@ -235,6 +338,31 @@ def converse(message: str, current: dict, context: str) -> dict:
         updates = {k: v for k, v in parsed.items()
                    if k != "assistant_reply" and v is not None}
         return {"updates": updates, "reply": parsed.get("assistant_reply", "")}
+
+
+def summarize_project(facts: str) -> str:
+    """Hand-me-down: a compact summary a future check-in can read instead of
+    re-analysing the whole project. Kept short on purpose to save tokens."""
+    if config.LLM_MOCK:
+        # Cheap deterministic summary, no tokens.
+        return "Offline summary: " + " ".join(facts.split())[:200]
+    instruction = (
+        "Summarize this project in 2 short sentences a future check-in can rely on: "
+        "what it is, what we can afford to lose, and the one thing to watch. No ROI, "
+        "no em dashes.\n\n" + facts
+    )
+    try:
+        return _call(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": instruction},
+            ],
+            max_tokens=120,
+        ).strip()
+    except BudgetExceeded:
+        raise
+    except Exception:
+        return "Summary unavailable; will re-read the project next time."
 
 
 def answer_with_context(question: str, context: str) -> str:

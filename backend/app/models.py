@@ -84,6 +84,14 @@ class Project(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # --- Hand-me-down: a short summary the LLM leaves for its next run ---
+    # Future check-ins read this instead of re-analysing the whole project,
+    # which saves tokens. Empty until the first opinion is generated.
+    summary: Mapped[str] = mapped_column(Text, default="")
+    summary_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     stakeholders: Mapped[list["Stakeholder"]] = relationship(

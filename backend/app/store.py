@@ -28,6 +28,7 @@ PROJECT_FIELDS = (
     "reputation_tier", "relationships_tier", "reversibility_tier", "pnl_eur",
     "hypothesis", "smallest_test", "contact_person", "contact_question",
     "signal_keep", "signal_stop", "reevaluation_date",
+    "summary",
 )
 
 

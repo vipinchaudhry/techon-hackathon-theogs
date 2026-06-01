@@ -66,6 +66,12 @@ def health() -> dict:
     }
 
 
+@app.get("/cost")
+def cost() -> dict:
+    """The tool's own affordable loss: token budget, spend, and what caching saved."""
+    return llm.cost_report()
+
+
 @app.post("/reset")
 def reset(db: Session = Depends(get_db)) -> dict:
     """Wipe and re-seed the three case studies. Handy between demo runs."""
@@ -600,6 +606,18 @@ def case_outcome(key: str, db: Session = Depends(get_db)) -> dict:
         )
         tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
 
+    # Hand-me-down: generate a compact summary the first time, then reuse it.
+    # A future check-in reads this instead of re-analysing the whole project,
+    # which saves tokens (Affordable Loss applied to our own budget).
+    if not proj.summary:
+        proj.summary = llm.summarize_project(facts)
+        proj.summary_at = datetime.now(timezone.utc)
+        db.commit()
+        store.export_json(db)
+        summary_source = "fresh"
+    else:
+        summary_source = "reused"
+
     return {
         "key": key,
         "project_id": proj.id,
@@ -609,6 +627,11 @@ def case_outcome(key: str, db: Session = Depends(get_db)) -> dict:
             "cost": meta["cost"],
         },
         "tool": tool,
+        "handmedown": {
+            "summary": proj.summary,
+            "source": summary_source,
+            "saved_at": proj.summary_at.isoformat() if proj.summary_at else None,
+        },
         "averted": meta["averted"],
         "mock_mode": config.LLM_MOCK,
     }
