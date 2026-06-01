@@ -183,3 +183,30 @@ class Consultation(Base):
     handmedown: Mapped[str] = mapped_column(Text, default="")
     # Status of the check-in loop: "scheduled" | "checked_in" | "closed".
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
+
+    # --- adoption: was this consult turned into a tracked project? ---
+    # "pending" (not asked yet) | "adopted" | "declined".
+    adoption: Mapped[str] = mapped_column(String(20), default="pending")
+    adopted_project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    decline_reason: Mapped[str] = mapped_column(Text, default="")
+
+    # The full persistent conversation for this consult (reach-outs + updates).
+    messages: Mapped[list["ConsultMessage"]] = relationship(
+        back_populates="consultation",
+        cascade="all, delete-orphan",
+        order_by="ConsultMessage.id",
+    )
+
+
+class ConsultMessage(Base):
+    """One turn in a consultation's ongoing conversation, so the advice and every
+    check-in update persist and reload (persistent memory)."""
+
+    __tablename__ = "consult_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    consultation_id: Mapped[int] = mapped_column(ForeignKey("consultations.id"))
+    consultation: Mapped["Consultation"] = relationship(back_populates="messages")
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    role: Mapped[str] = mapped_column(String(12))  # "navigator" | "user"
+    text: Mapped[str] = mapped_column(Text, default="")

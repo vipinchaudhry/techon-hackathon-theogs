@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from . import config, llm, schemas, seed, status_engine, store
 from .db import Base, SessionLocal, engine, get_db
-from .models import AuditLog, ChatMessage, Consultation, Project
+from .models import AuditLog, ChatMessage, Consultation, ConsultMessage, Project
 
 # Project fields the navigator (or a manual edit) may change.
 EDITABLE_FIELDS = (
@@ -459,6 +459,15 @@ def _consultation_dict(c: Consultation) -> dict:
         "handmedown": c.handmedown,
         "status": c.status,
         "due": bool(_is_due(c.check_in_at) and c.status == "scheduled"),
+        "adoption": c.adoption,
+        "adopted_project_id": c.adopted_project_id,
+        "decline_reason": c.decline_reason,
+        # The full persistent conversation, so it reloads on refresh.
+        "messages": [
+            {"role": m.role, "text": m.text,
+             "timestamp": m.timestamp.isoformat() if m.timestamp else None}
+            for m in c.messages
+        ],
     }
 
 
@@ -467,12 +476,17 @@ def consult(body: schemas.ConsultIn, db: Session = Depends(get_db)) -> dict:
     """Ask 'what do you think about X?'. The Navigator reviews the portfolio,
     gives an affordable-loss suggestion + a timeframe, caches it as a hand-me-down,
     and schedules itself to check back in on progress."""
+    # Advice always reviews EVERY project. If anchored to one project, lead with
+    # it for focus, but still include the whole portfolio so cross-project
+    # conflicts and synergies are caught.
+    portfolio = _whole_portfolio_snapshot(db)
     if body.project_id:
         parent = _get_project(db, body.project_id)
         kids = list(db.scalars(select(Project).where(Project.parent_id == parent.id)).all())
-        portfolio = _portfolio_context(parent, kids)
-    else:
-        portfolio = _whole_portfolio_snapshot(db)
+        portfolio = (
+            "FOCUS PROJECT:\n" + _portfolio_context(parent, kids)
+            + "\n\nALL OTHER PROJECTS IN THE PORTFOLIO:\n" + portfolio
+        )
 
     result = llm.consult(body.question, portfolio)
     weeks = float(result.get("timeframe_weeks") or 2)
@@ -486,6 +500,10 @@ def consult(body: schemas.ConsultIn, db: Session = Depends(get_db)) -> dict:
         status="scheduled",
     )
     db.add(c)
+    db.flush()
+    # Persist the opening turn so the conversation reloads later.
+    c.messages.append(ConsultMessage(role="user", text=body.question))
+    c.messages.append(ConsultMessage(role="navigator", text=result.get("suggestion", "")))
     db.commit()
     return {"consultation": _consultation_dict(c), "mock_mode": config.LLM_MOCK}
 
@@ -536,6 +554,10 @@ def check_in(cid: int, body: schemas.CheckInIn, db: Session = Depends(get_db)) -
         except Exception:
             msg = (f"Checking in on '{c.question}'. How is it going? "
                    f"Remember: {c.handmedown}")
+        # Log the reach-out only once so we do not duplicate on repeated polls.
+        if not any(m.role == "navigator" and m.text == msg for m in c.messages):
+            c.messages.append(ConsultMessage(role="navigator", text=msg))
+            db.commit()
         return {"reach_out": msg, "consultation": _consultation_dict(c)}
 
     # The user replied with progress -> advise next step from the hand-me-down.
@@ -556,10 +578,76 @@ def check_in(cid: int, body: schemas.CheckInIn, db: Session = Depends(get_db)) -
         )
     except Exception:
         reply = "Keep going if the test gave a real signal; otherwise stop."
+
     c.status = "checked_in"
     c.handmedown = (c.handmedown + " | Update: " + body.progress)[:500]
+    c.messages.append(ConsultMessage(role="user", text=body.progress))
+    c.messages.append(ConsultMessage(role="navigator", text=reply))
+
+    # If this consult is not yet a tracked project, offer to adopt it now.
+    offer_adopt = c.adoption == "pending" and c.adopted_project_id is None
+    if offer_adopt:
+        ask = ("Should I add this as a project in your tracked portfolio so I keep "
+               "watching its affordable loss? If not, tell me why and I will note it.")
+        c.messages.append(ConsultMessage(role="navigator", text=ask))
     db.commit()
-    return {"reply": reply, "consultation": _consultation_dict(c)}
+    return {
+        "reply": reply,
+        "offer_adopt": offer_adopt,
+        "consultation": _consultation_dict(c),
+    }
+
+
+@app.post("/consultations/{cid}/adopt")
+def adopt_consultation(cid: int, body: schemas.AdoptIn, db: Session = Depends(get_db)) -> dict:
+    """Answer the 'should I add this as a tracked project?' offer.
+
+    decision='yes' creates a neutral project node (no forecast yet) under the
+    consult's focus project, or top-level. decision='no' records the reason.
+    """
+    c = db.get(Consultation, cid)
+    if not c:
+        raise HTTPException(404, "Consultation not found")
+
+    decision = (body.decision or "").strip().lower()
+    if decision in ("yes", "adopt", "add"):
+        name = (body.name or c.question or "New project").strip()[:120]
+        p = Project(
+            name=name,
+            description=f"Adopted from a consult. {c.handmedown}"[:480],
+            status="Active",
+            parent_id=c.project_id,  # under the focus project, or top-level
+            money_committed=float(body.budget_eur or 0),
+            time_committed_weeks=float(c.timeframe_weeks or 0),
+            pnl_eur=None,  # grey / neutral: no forecast yet
+            hypothesis=c.suggestion[:480],
+        )
+        db.add(p)
+        db.flush()
+        p.audit_entries.append(
+            AuditLog(actor="navigator", action="adopted-from-consult",
+                     detail=f"From consult #{c.id}: {c.question}"[:480])
+        )
+        c.adoption = "adopted"
+        c.adopted_project_id = p.id
+        note = f"Added '{name}' as a tracked project. I will watch its affordable loss."
+        c.messages.append(ConsultMessage(role="navigator", text=note))
+        db.commit()
+        store.export_json(db)
+        return {"adopted": True, "project_id": p.id,
+                "message": note, "consultation": _consultation_dict(c)}
+
+    # declined
+    c.adoption = "declined"
+    c.decline_reason = (body.reason or "").strip()
+    why = c.decline_reason or "(no reason given)"
+    note = f"Noted, not adding it for now. Reason on record: {why}"
+    c.messages.append(ConsultMessage(role="user",
+                                     text=f"Don't add it. {c.decline_reason}".strip()))
+    c.messages.append(ConsultMessage(role="navigator", text=note))
+    db.commit()
+    return {"adopted": False, "reason": c.decline_reason,
+            "message": note, "consultation": _consultation_dict(c)}
 
 
 # --- add-node workflow: analyze a concern, then create a neutral node ----------

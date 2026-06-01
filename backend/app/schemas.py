@@ -118,6 +118,13 @@ class CheckInIn(BaseModel):
     progress: str = ""  # the user's progress update at the check-in
 
 
+class AdoptIn(BaseModel):
+    decision: str = "no"          # "yes" | "no"
+    name: str = ""                # project name if adopting
+    budget_eur: float | None = None
+    reason: str = ""              # why not, if declining
+
+
 class AddNodeIn(BaseModel):
     parent_id: int
     name: str
