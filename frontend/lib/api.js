@@ -57,6 +57,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  replyConsult: (cid, progress) =>
+    req(`/consultations/${cid}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ progress }),
+    }),
 
   analyze: (idea, history = []) =>
     req("/analyze", { method: "POST", body: JSON.stringify({ idea, history }) }),

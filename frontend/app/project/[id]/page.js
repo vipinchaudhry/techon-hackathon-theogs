@@ -637,8 +637,16 @@ function ConsultPanel({ projectId }) {
 
       {consults.map((c) => (
         <div key={c.id} className="card" style={{ background: "var(--panel-2)", marginTop: 12 }}>
+          {/* AI title */}
+          {c.title && (
+            <div className="spread" style={{ marginBottom: 8 }}>
+              <strong>{c.title}</strong>
+              <span className="badge gray">{c.status === "checked_in" ? "in progress" : "advised"}</span>
+            </div>
+          )}
+
           {/* full persistent conversation */}
-          <div className="chat-log" style={{ maxHeight: 260 }}>
+          <div className="chat-log" style={{ maxHeight: 280 }}>
             {(c.messages || []).map((m, i) => (
               <div key={i} className={`bubble ${m.role === "user" ? "user" : "bot"}`}>
                 {m.text}
@@ -646,9 +654,14 @@ function ConsultPanel({ projectId }) {
             ))}
           </div>
 
+          {/* reply to keep the conversation going (before adoption is resolved) */}
+          {c.adoption === "pending" && c.status !== "checked_in" && !c.due && (
+            <ReplyRow consult={c} onDone={load} />
+          )}
+
           {/* adoption resolved */}
           {c.adoption === "adopted" && (
-            <span className="badge Low">Added as a tracked project</span>
+            <span className="badge Low">Tracked as “{c.title}”</span>
           )}
           {c.adoption === "declined" && (
             <span className="badge gray">Not tracked — {c.decline_reason || "declined"}</span>
@@ -661,7 +674,7 @@ function ConsultPanel({ projectId }) {
             ) : c.due ? (
               <CheckInRow consult={c} onDone={load} />
             ) : (
-              <div className="spread">
+              <div className="spread" style={{ marginTop: 8 }}>
                 <span className="badge gray">
                   Check-in in ~{Math.round(c.timeframe_weeks)} weeks
                 </span>
@@ -673,6 +686,33 @@ function ConsultPanel({ projectId }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+function ReplyRow({ consult, onDone }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function send() {
+    if (!text.trim()) return;
+    setBusy(true);
+    try {
+      await api.replyConsult(consult.id, text.trim());
+      setText("");
+      if (onDone) onDone();
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="row" style={{ marginBottom: 8 }}>
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && send()}
+        placeholder="Reply to continue the conversation..."
+      />
+      <button className="secondary" onClick={send} disabled={busy || !text.trim()}>
+        {busy ? "..." : "Reply"}
+      </button>
     </div>
   );
 }
