@@ -1,0 +1,135 @@
+{
+  "program": {
+    "name": "Kodak Portfolio",
+    "description": "Kodak's bets across film and digital. Each node is a project. Green nodes make money, red nodes lose it. The question is not ROI, it is which bets we can afford to lose while we find out if digital is real.",
+    "owner": "Kodak Leadership",
+    "status": "Active",
+    "uncertainty_type": "Market",
+    "money_committed": 3000000,
+    "money_spent": 2320000,
+    "time_committed_weeks": 1200,
+    "time_spent_weeks": 900,
+    "reputation_tier": "Medium",
+    "relationships_tier": "Low",
+    "reversibility_tier": "Low",
+    "hypothesis": "A balanced portfolio funds digital exploration from film profits.",
+    "smallest_test": "Track each project's profit/loss and affordable loss monthly.",
+    "contact_person": "Each project owner",
+    "contact_question": "Is this project still within what we can afford to lose?",
+    "signal_keep": "Film profits cover the digital bets we choose to keep.",
+    "signal_stop": "Loss-making bets exceed what the portfolio can absorb.",
+    "reevaluation_in_days": 21
+  },
+  "nodes": [
+    {
+      "name": "Color Film (consumer)",
+      "pnl_eur": 1400000,
+      "money_committed": 200000,
+      "money_spent": 180000,
+      "time_committed_weeks": 60,
+      "time_spent_weeks": 58,
+      "reputation_tier": "Low",
+      "uncertainty_type": "Market",
+      "status": "Active"
+    },
+    {
+      "name": "Film Processing Labs",
+      "pnl_eur": 820000,
+      "money_committed": 150000,
+      "money_spent": 140000,
+      "time_committed_weeks": 80,
+      "time_spent_weeks": 78,
+      "reputation_tier": "Low",
+      "uncertainty_type": "Resource",
+      "status": "Active"
+    },
+    {
+      "name": "Photo Paper",
+      "pnl_eur": 360000,
+      "money_committed": 90000,
+      "money_spent": 85000,
+      "time_committed_weeks": 50,
+      "time_spent_weeks": 48,
+      "reputation_tier": "Low",
+      "uncertainty_type": "Market",
+      "status": "Active"
+    },
+    {
+      "name": "Single-Use Cameras",
+      "pnl_eur": 240000,
+      "money_committed": 70000,
+      "money_spent": 60000,
+      "time_committed_weeks": 40,
+      "time_spent_weeks": 35,
+      "reputation_tier": "Low",
+      "uncertainty_type": "Market",
+      "status": "Active"
+    },
+    {
+      "name": "Digital Camera (Sasson)",
+      "pnl_eur": -180000,
+      "money_committed": 50000,
+      "money_spent": 48000,
+      "time_committed_weeks": 12,
+      "time_spent_weeks": 11,
+      "reputation_tier": "Medium",
+      "uncertainty_type": "Market",
+      "status": "Active"
+    },
+    {
+      "name": "DSLR Prototype",
+      "pnl_eur": -260000,
+      "money_committed": 120000,
+      "money_spent": 118000,
+      "time_committed_weeks": 90,
+      "time_spent_weeks": 88,
+      "reputation_tier": "High",
+      "uncertainty_type": "Technology",
+      "status": "Active"
+    },
+    {
+      "name": "Inkjet Printers",
+      "pnl_eur": -140000,
+      "money_committed": 110000,
+      "money_spent": 90000,
+      "time_committed_weeks": 60,
+      "time_spent_weeks": 40,
+      "reputation_tier": "Medium",
+      "uncertainty_type": "Technology",
+      "status": "Active"
+    },
+    {
+      "name": "Online Photo Sharing",
+      "pnl_eur": -90000,
+      "money_committed": 80000,
+      "money_spent": 60000,
+      "time_committed_weeks": 30,
+      "time_spent_weeks": 22,
+      "reputation_tier": "Medium",
+      "uncertainty_type": "Market",
+      "status": "Active"
+    },
+    {
+      "name": "Kiosk Printing",
+      "pnl_eur": 60000,
+      "money_committed": 40000,
+      "money_spent": 30000,
+      "time_committed_weeks": 25,
+      "time_spent_weeks": 20,
+      "reputation_tier": "Low",
+      "uncertainty_type": "Resource",
+      "status": "Active"
+    },
+    {
+      "name": "Chemicals Division",
+      "pnl_eur": 510000,
+      "money_committed": 130000,
+      "money_spent": 120000,
+      "time_committed_weeks": 70,
+      "time_spent_weeks": 68,
+      "reputation_tier": "Low",
+      "uncertainty_type": "Resource",
+      "status": "Active"
+    }
+  ]
+}

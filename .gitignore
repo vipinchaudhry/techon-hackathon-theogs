@@ -15,4 +15,6 @@ frontend/.env.local
 
 # --- os ---
 .DS_Store
-backend/data/
+
+# Auto-generated JSON mirror is ignored, but the kodak.json SOURCE is tracked.
+backend/data/projects.json

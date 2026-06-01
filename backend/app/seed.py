@@ -6,12 +6,16 @@ POST /reset endpoint. Numbers are illustrative but chosen to make each case's
 teaching point fire in the status engine.
 """
 
+import json
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import AuditLog, Project, Stakeholder
+
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 
 
 def _audit(project: Project, action: str, detail: str, actor: str = "system", days_ago: int = 0):
@@ -26,75 +30,62 @@ def _audit(project: Project, action: str, detail: str, actor: str = "system", da
 
 
 def seed_kodak(db: Session) -> Project:
-    """Kodak as a project portfolio: one program with project nodes.
+    """Kodak as a project portfolio, loaded from data/kodak.json.
 
-    Each node carries a profit/loss number. Green = in profit, red = in loss.
-    This is the manager view: see the whole portfolio at a glance as a graph,
-    and decide which bets are affordable, not which have the best ROI.
+    Keeping the data in a JSON file (not hardcoded Python) means anyone can edit
+    the portfolio without touching code. The server imports and reads it here.
+    Each node carries a profit/loss number: green = profit, red = loss.
     """
+    spec = json.loads((DATA_DIR / "kodak.json").read_text(encoding="utf-8"))
+    p = spec["program"]
     program = Project(
-        name="Kodak Portfolio",
-        description=(
-            "Kodak's bets across film and digital. Each node is a project. Green nodes "
-            "make money, red nodes lose it. The question is not ROI, it is which bets "
-            "we can afford to lose while we find out if digital is real."
-        ),
-        owner="Kodak Leadership",
-        status="Active",
-        uncertainty_type="Market",
-        money_committed=3_000_000,
-        money_spent=2_320_000,
-        time_committed_weeks=1_200,
-        time_spent_weeks=900,
-        reputation_tier="Medium",
-        relationships_tier="Low",
-        reversibility_tier="Low",
-        hypothesis="A balanced portfolio funds digital exploration from film profits.",
-        smallest_test="Track each project's profit/loss and affordable loss monthly.",
-        contact_person="Each project owner",
-        contact_question="Is this project still within what we can afford to lose?",
-        signal_keep="Film profits cover the digital bets we choose to keep.",
-        signal_stop="Loss-making bets exceed what the portfolio can absorb.",
-        reevaluation_date=date.today() + timedelta(days=21),
+        name=p["name"],
+        description=p["description"],
+        owner=p.get("owner", ""),
+        status=p.get("status", "Active"),
+        uncertainty_type=p.get("uncertainty_type"),
+        money_committed=p.get("money_committed", 0),
+        money_spent=p.get("money_spent", 0),
+        time_committed_weeks=p.get("time_committed_weeks", 0),
+        time_spent_weeks=p.get("time_spent_weeks", 0),
+        reputation_tier=p.get("reputation_tier", "Low"),
+        relationships_tier=p.get("relationships_tier", "Low"),
+        reversibility_tier=p.get("reversibility_tier", "Low"),
+        hypothesis=p.get("hypothesis", ""),
+        smallest_test=p.get("smallest_test", ""),
+        contact_person=p.get("contact_person", ""),
+        contact_question=p.get("contact_question", ""),
+        signal_keep=p.get("signal_keep", ""),
+        signal_stop=p.get("signal_stop", ""),
+        reevaluation_date=date.today() + timedelta(days=p.get("reevaluation_in_days", 21)),
     )
     db.add(program)
     db.flush()
 
-    # (name, pnl_eur, money_committed, money_spent, weeks_committed, weeks_spent,
-    #  reputation, uncertainty, status)
-    nodes = [
-        ("Color Film (consumer)", 1_400_000, 200_000, 180_000, 60, 58, "Low", "Market", "Active"),
-        ("Film Processing Labs", 820_000, 150_000, 140_000, 80, 78, "Low", "Resource", "Active"),
-        ("Photo Paper", 360_000, 90_000, 85_000, 50, 48, "Low", "Market", "Active"),
-        ("Single-Use Cameras", 240_000, 70_000, 60_000, 40, 35, "Low", "Market", "Active"),
-        ("Digital Camera (Sasson)", -180_000, 50_000, 48_000, 12, 11, "Medium", "Market", "Active"),
-        ("DSLR Prototype", -260_000, 120_000, 118_000, 90, 88, "High", "Technology", "Active"),
-        ("Inkjet Printers", -140_000, 110_000, 90_000, 60, 40, "Medium", "Technology", "Active"),
-        ("Online Photo Sharing", -90_000, 80_000, 60_000, 30, 22, "Medium", "Market", "Active"),
-        ("Kiosk Printing", 60_000, 40_000, 30_000, 25, 20, "Low", "Resource", "Active"),
-        ("Chemicals Division", 510_000, 130_000, 120_000, 70, 68, "Low", "Resource", "Active"),
-    ]
-    for (name, pnl, mc, ms, tc, ts, rep, unc, st) in nodes:
-        losing = pnl < 0
+    for n in spec["nodes"]:
+        pnl = n.get("pnl_eur")
+        losing = pnl is not None and pnl < 0
+        pnl_str = f"EUR {pnl:,}" if pnl is not None else "no forecast yet"
         child = Project(
-            name=name,
+            name=n["name"],
             description=(
-                f"{name}: currently {'losing' if losing else 'making'} money "
-                f"(EUR {pnl:,}). Part of the Kodak portfolio."
+                f"{n['name']}: currently "
+                f"{'losing' if losing else 'making'} money ({pnl_str}). "
+                "Part of the Kodak portfolio."
             ),
-            owner="Project owner",
-            status=st,
+            owner=n.get("owner", "Project owner"),
+            status=n.get("status", "Active"),
             parent_id=program.id,
-            uncertainty_type=unc,
-            money_committed=mc,
-            money_spent=ms,
-            time_committed_weeks=tc,
-            time_spent_weeks=ts,
-            reputation_tier=rep,
-            relationships_tier="Low",
-            reversibility_tier="Medium" if losing else "Low",
+            uncertainty_type=n.get("uncertainty_type"),
+            money_committed=n.get("money_committed", 0),
+            money_spent=n.get("money_spent", 0),
+            time_committed_weeks=n.get("time_committed_weeks", 0),
+            time_spent_weeks=n.get("time_spent_weeks", 0),
+            reputation_tier=n.get("reputation_tier", "Low"),
+            relationships_tier=n.get("relationships_tier", "Low"),
+            reversibility_tier=n.get("reversibility_tier", "Medium" if losing else "Low"),
             pnl_eur=pnl,
-            hypothesis=f"{name} earns its place in the portfolio.",
+            hypothesis=f"{n['name']} earns its place in the portfolio.",
             smallest_test="Review this quarter's profit/loss against its affordable loss.",
             contact_person="Project owner",
             contact_question="What would tell us to double down or stop?",
@@ -104,7 +95,9 @@ def seed_kodak(db: Session) -> Project:
         )
         db.add(child)
 
-    _audit(program, "created", "Seeded Kodak portfolio with 10 project nodes.", days_ago=3)
+    _audit(program, "created",
+           f"Seeded Kodak portfolio with {len(spec['nodes'])} nodes from kodak.json.",
+           days_ago=3)
     return program
 
 
