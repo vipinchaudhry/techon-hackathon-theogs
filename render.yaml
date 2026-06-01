@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: techon-navigator-backend
+    runtime: python
+    region: frankfurt
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.4"
+      # The OpenRouter key. Set this in the Render dashboard (do NOT commit it).
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Smarter model for the advice sessions.
+      - key: LLM_SMART_MODEL
+        value: openai/gpt-4o-mini
+      # Optional web search; set if you have a Tavily key.
+      - key: TAVILY_API_KEY
+        sync: false

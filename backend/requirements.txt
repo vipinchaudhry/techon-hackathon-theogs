@@ -4,7 +4,11 @@ sqlalchemy==2.0.36
 pydantic==2.10.4
 httpx==0.28.1
 python-dotenv==1.0.1
+# Slack bot (Socket Mode needs websocket-client)
+slack_bolt
+websocket-client
+# Token-saving cache (we use the map cache; numpy is its runtime dep)
+gptcache
+numpy
 # Only needed if you switch DATABASE_URL to Postgres:
 # psycopg[binary]==3.2.3
-slack_bolt
-gptcache
