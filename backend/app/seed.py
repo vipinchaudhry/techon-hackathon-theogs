@@ -29,12 +29,47 @@ def _audit(project: Project, action: str, detail: str, actor: str = "system", da
     )
 
 
-def seed_kodak(db: Session) -> Project:
-    """Kodak as a project portfolio, loaded from data/kodak.json.
+def _make_project(spec: dict, parent_id, defaults: dict) -> Project:
+    """Build one Project from a JSON dict, falling back to defaults."""
+    pnl = spec.get("pnl_eur")
+    losing = pnl is not None and pnl < 0
+    return Project(
+        name=spec["name"],
+        description=spec.get("description", defaults.get("description", "")),
+        owner=spec.get("owner", "Project owner"),
+        status=spec.get("status", "Active"),
+        parent_id=parent_id,
+        uncertainty_type=spec.get("uncertainty_type"),
+        money_committed=spec.get("money_committed", 0),
+        money_spent=spec.get("money_spent", 0),
+        time_committed_weeks=spec.get("time_committed_weeks", 0),
+        time_spent_weeks=spec.get("time_spent_weeks", 0),
+        reputation_tier=spec.get("reputation_tier", "Low"),
+        relationships_tier=spec.get("relationships_tier", "Low"),
+        reversibility_tier=spec.get("reversibility_tier", "Medium" if losing else "Low"),
+        pnl_eur=pnl,
+        hypothesis=spec.get("hypothesis", f"{spec['name']} earns its place."),
+        smallest_test=spec.get("smallest_test",
+                               "Review this period's profit/loss against affordable loss."),
+        contact_person=spec.get("contact_person", "Project owner"),
+        contact_question=spec.get("contact_question",
+                                  "What would tell us to double down or stop?"),
+        signal_keep=spec.get("signal_keep",
+                             "Profit holds or the loss stays within what we can absorb."),
+        signal_stop=spec.get("signal_stop", "Loss grows past the affordable boundary."),
+        reevaluation_date=date.today() + timedelta(days=14),
+    )
 
-    Keeping the data in a JSON file (not hardcoded Python) means anyone can edit
-    the portfolio without touching code. The server imports and reads it here.
-    Each node carries a profit/loss number: green = profit, red = loss.
+
+def seed_kodak(db: Session) -> Project:
+    """Kodak portfolio, loaded from data/kodak.json. Three levels:
+
+        Kodak Portfolio (program)
+          -> Team (one per topic; its money/time/pnl is the sum of its projects)
+               -> Project (the individual bets, green/red)
+
+    Keeping the data in JSON means anyone can edit teams and projects without
+    touching code.
     """
     spec = json.loads((DATA_DIR / "kodak.json").read_text(encoding="utf-8"))
     p = spec["program"]
@@ -62,43 +97,58 @@ def seed_kodak(db: Session) -> Project:
     db.add(program)
     db.flush()
 
-    for n in spec["nodes"]:
-        pnl = n.get("pnl_eur")
-        losing = pnl is not None and pnl < 0
-        pnl_str = f"EUR {pnl:,}" if pnl is not None else "no forecast yet"
-        child = Project(
-            name=n["name"],
-            description=(
-                f"{n['name']}: currently "
-                f"{'losing' if losing else 'making'} money ({pnl_str}). "
-                "Part of the Kodak portfolio."
-            ),
-            owner=n.get("owner", "Project owner"),
-            status=n.get("status", "Active"),
+    n_projects = 0
+    for team_spec in spec.get("teams", []):
+        projects = team_spec.get("projects", [])
+        # A team's numbers are the sum of its projects (the rollup).
+        def s(key):
+            return sum(pr.get(key, 0) or 0 for pr in projects)
+        team_pnl = sum(pr.get("pnl_eur", 0) or 0 for pr in projects)
+        team = Project(
+            name=team_spec["name"],
+            description=team_spec.get("topic", ""),
+            owner=team_spec.get("name", ""),
+            status="Active",
             parent_id=program.id,
-            uncertainty_type=n.get("uncertainty_type"),
-            money_committed=n.get("money_committed", 0),
-            money_spent=n.get("money_spent", 0),
-            time_committed_weeks=n.get("time_committed_weeks", 0),
-            time_spent_weeks=n.get("time_spent_weeks", 0),
-            reputation_tier=n.get("reputation_tier", "Low"),
-            relationships_tier=n.get("relationships_tier", "Low"),
-            reversibility_tier=n.get("reversibility_tier", "Medium" if losing else "Low"),
-            pnl_eur=pnl,
-            hypothesis=f"{n['name']} earns its place in the portfolio.",
-            smallest_test="Review this quarter's profit/loss against its affordable loss.",
-            contact_person="Project owner",
-            contact_question="What would tell us to double down or stop?",
-            signal_keep="Profit holds or the loss stays within what we can absorb.",
-            signal_stop="Loss grows past the affordable boundary.",
+            uncertainty_type=None,
+            money_committed=s("money_committed"),
+            money_spent=s("money_spent"),
+            time_committed_weeks=s("time_committed_weeks"),
+            time_spent_weeks=s("time_spent_weeks"),
+            reputation_tier=_worst_tier(pr.get("reputation_tier", "Low") for pr in projects),
+            relationships_tier="Low",
+            reversibility_tier="Low",
+            pnl_eur=team_pnl,
+            hypothesis=f"{team_spec['name']}: {team_spec.get('topic', '')}",
+            smallest_test="Track this team's profit/loss against its affordable loss.",
+            contact_person=f"{team_spec['name']} lead",
+            contact_question="Is the team still within what we can afford to lose?",
+            signal_keep="The team's net stays within the portfolio's affordable loss.",
+            signal_stop="The team's losses exceed what the portfolio can absorb.",
             reevaluation_date=date.today() + timedelta(days=14),
         )
-        db.add(child)
+        db.add(team)
+        db.flush()
+        for pr in projects:
+            db.add(_make_project(
+                pr, team.id,
+                defaults={"description":
+                          f"{pr['name']}: part of {team_spec['name']}."}))
+            n_projects += 1
 
     _audit(program, "created",
-           f"Seeded Kodak portfolio with {len(spec['nodes'])} nodes from kodak.json.",
+           f"Seeded Kodak portfolio: {len(spec.get('teams', []))} teams, "
+           f"{n_projects} projects from kodak.json.",
            days_ago=3)
     return program
+
+
+_TIER_RANK = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+
+
+def _worst_tier(tiers) -> str:
+    best = max((_TIER_RANK.get(t, 1) for t in tiers), default=1)
+    return {v: k for k, v in _TIER_RANK.items()}[best]
 
 
 def seed_google(db: Session) -> Project:

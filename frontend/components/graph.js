@@ -19,16 +19,26 @@ export function PortfolioGraph({ graph, selectedId, onSelect }) {
   const radiusFor = (n) =>
     n.is_center ? 13 : 5 + 7 * Math.sqrt((n.money_committed || 1) / maxMoney);
 
-  // (re)build simulation when the graph changes
+  // (re)build simulation when the graph changes. Seed positions by depth so a
+  // multi-level tree (program -> teams -> projects) starts as concentric rings
+  // and the physics untangles it cleanly.
   useEffect(() => {
-    const N = graph.nodes.length;
-    sim.current.nodes = graph.nodes.map((n, i) => {
-      const a = (i / N) * Math.PI * 2;
+    const byDepth = {};
+    graph.nodes.forEach((n) => {
+      const d = n.depth || 0;
+      (byDepth[d] = byDepth[d] || []).push(n);
+    });
+    sim.current.nodes = graph.nodes.map((n) => {
+      const d = n.depth || 0;
+      const ring = byDepth[d];
+      const idx = ring.indexOf(n);
+      const a = (idx / Math.max(ring.length, 1)) * Math.PI * 2;
+      const radius = d === 0 ? 0 : 70 + d * 80;
       return {
         ...n,
         r: radiusFor(n),
-        x: n.is_center ? cx : cx + 120 * Math.cos(a) + (i % 3) * 6,
-        y: n.is_center ? cy : cy + 120 * Math.sin(a) + (i % 2) * 6,
+        x: cx + radius * Math.cos(a),
+        y: cy + radius * Math.sin(a),
         vx: 0,
         vy: 0,
       };

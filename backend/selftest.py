@@ -27,11 +27,15 @@ kodak = db.scalar(select(Project).where(Project.name.like("Kodak%"), Project.par
 google = db.scalar(select(Project).where(Project.name.like("Google%"), Project.parent_id.is_(None)))
 sony = db.scalar(select(Project).where(Project.name.like("Sony%"), Project.parent_id.is_(None)))
 
-# Kodak is now a portfolio (like Google): a parent with profit/loss sub-projects.
-kodak_kids = db.scalars(select(Project).where(Project.parent_id == kodak.id)).all()
-check("kodak_is_portfolio", len(kodak_kids) == 10)
+# Kodak is a portfolio organised into teams: program -> teams -> projects.
+kodak_teams = db.scalars(select(Project).where(Project.parent_id == kodak.id)).all()
+all_projects = []
+for t in kodak_teams:
+    all_projects += list(db.scalars(select(Project).where(Project.parent_id == t.id)).all())
+check("kodak_has_teams", len(kodak_teams) >= 3)
+check("kodak_has_10_projects_under_teams", len(all_projects) == 10)
 check("kodak_has_red_and_green",
-      any((c.pnl_eur or 0) < 0 for c in kodak_kids) and any((c.pnl_eur or 0) > 0 for c in kodak_kids))
+      any((c.pnl_eur or 0) < 0 for c in all_projects) and any((c.pnl_eur or 0) > 0 for c in all_projects))
 
 ss = status_engine.evaluate(sony)
 check("sony_overall_high", ss["overall_tier"] == "High")

@@ -36,9 +36,13 @@ def get(name_like):
 # -> bankruptcy. Seen as a PORTFOLIO, the red digital bets are small and
 # affordable next to the green film profits, so they are bets to keep.
 kodak = get("Kodak")
-kodak_kids = list(db.scalars(select(Project).where(Project.parent_id == kodak.id)).all())
-check("kodak: it is a portfolio of bets (sub-projects)", len(kodak_kids) >= 3,
-      f"n={len(kodak_kids)}")
+kodak_teams = list(db.scalars(select(Project).where(Project.parent_id == kodak.id)).all())
+kodak_kids = []
+for t in kodak_teams:
+    kodak_kids += list(db.scalars(select(Project).where(Project.parent_id == t.id)).all())
+check("kodak: organised into teams", len(kodak_teams) >= 3, f"teams={len(kodak_teams)}")
+check("kodak: teams own the individual project bets", len(kodak_kids) >= 8,
+      f"projects={len(kodak_kids)}")
 greens = [c for c in kodak_kids if (c.pnl_eur or 0) > 0]
 reds = [c for c in kodak_kids if (c.pnl_eur or 0) < 0]
 check("kodak: has both money-makers and money-losers",

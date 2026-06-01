@@ -181,20 +181,18 @@ def project_rollup(project_id: int, db: Session = Depends(get_db)) -> dict:
 def project_graph(project_id: int, db: Session = Depends(get_db)) -> dict:
     """Nodes + links for an Obsidian-style portfolio graph.
 
-    The parent is the centre node; each sub-project is a node coloured by
-    profit (green) or loss (red), sized by money committed.
+    Recursive: the parent is the centre, and EVERY descendant (teams and their
+    projects) is a node, linked to its own parent. Nodes are coloured by profit
+    (green) / loss (red) / no-forecast (grey) and sized by money committed.
     """
     parent = _get_project(db, project_id)
-    children = list(
-        db.scalars(select(Project).where(Project.parent_id == project_id)).all()
-    )
 
     def state_of(p: Project) -> str:
         if p.pnl_eur is None:
             return "neutral"
         return "profit" if p.pnl_eur >= 0 else "loss"
 
-    def node(p: Project, is_center: bool):
+    def node(p: Project, is_center: bool, depth: int):
         return {
             "id": p.id,
             "name": p.name,
@@ -203,21 +201,37 @@ def project_graph(project_id: int, db: Session = Depends(get_db)) -> dict:
             "money_committed": p.money_committed,
             "overall_tier": status_engine.overall_tier(p),
             "is_center": is_center,
+            "depth": depth,
         }
 
-    nodes = [node(parent, True)] + [node(c, False) for c in children]
-    links = [{"source": parent.id, "target": c.id} for c in children]
-    total_pnl = sum(c.pnl_eur for c in children if c.pnl_eur is not None)
+    nodes = [node(parent, True, 0)]
+    links = []
+    leaves = []  # deepest projects, for the totals
+
+    def walk(parent_obj: Project, depth: int):
+        kids = list(db.scalars(select(Project).where(Project.parent_id == parent_obj.id)).all())
+        for c in kids:
+            nodes.append(node(c, False, depth))
+            links.append({"source": parent_obj.id, "target": c.id})
+            grandkids = walk(c, depth + 1)
+            if not grandkids:
+                leaves.append(c)
+
+        return kids
+
+    walk(parent, 1)
+
+    total_pnl = sum(c.pnl_eur for c in leaves if c.pnl_eur is not None)
     return {
         "center_id": parent.id,
         "nodes": nodes,
         "links": links,
         "totals": {
             "pnl_eur": total_pnl,
-            "profit_count": sum(1 for c in children if c.pnl_eur is not None and c.pnl_eur >= 0),
-            "loss_count": sum(1 for c in children if c.pnl_eur is not None and c.pnl_eur < 0),
-            "neutral_count": sum(1 for c in children if c.pnl_eur is None),
-            "node_count": len(children),
+            "profit_count": sum(1 for c in leaves if c.pnl_eur is not None and c.pnl_eur >= 0),
+            "loss_count": sum(1 for c in leaves if c.pnl_eur is not None and c.pnl_eur < 0),
+            "neutral_count": sum(1 for c in leaves if c.pnl_eur is None),
+            "node_count": len(leaves),
         },
     }
 
@@ -335,20 +349,26 @@ def _portfolio_context(parent: Project, children: list[Project]) -> str:
 
 
 def _whole_portfolio_snapshot(db: Session) -> str:
-    """A snapshot of EVERY top-level project, for a portfolio-wide consult."""
-    tops = db.scalars(select(Project).where(Project.parent_id.is_(None))).all()
+    """A recursive snapshot of EVERY project (programs, teams, projects), so a
+    consult sees the individual bets by name, not just the team rollups."""
     lines = []
-    for p in tops:
-        kids = list(db.scalars(select(Project).where(Project.parent_id == p.id)).all())
-        if kids:
-            lines.append(_portfolio_context(p, kids))
+
+    def walk(p: Project, depth: int):
+        indent = "  " * depth
+        if p.pnl_eur is None:
+            money = (f"money committed EUR {int(p.money_committed):,}, "
+                     f"spent EUR {int(p.money_spent):,}")
+            state = "no forecast"
         else:
-            lines.append(
-                f"Project: {p.name}. {p.description} "
-                f"Money committed EUR {int(p.money_committed):,}, "
-                f"spent EUR {int(p.money_spent):,}; status {p.status}."
-            )
-    return "\n\n".join(lines) or "No projects yet."
+            state = "PROFIT" if p.pnl_eur >= 0 else "LOSS"
+            money = f"{state} EUR {int(p.pnl_eur):,}"
+        lines.append(f"{indent}- {p.name}: {money}; status {p.status}")
+        for c in db.scalars(select(Project).where(Project.parent_id == p.id)).all():
+            walk(c, depth + 1)
+
+    for top in db.scalars(select(Project).where(Project.parent_id.is_(None))).all():
+        walk(top, 0)
+    return "\n".join(lines) or "No projects yet."
 
 
 @app.post("/ask")
