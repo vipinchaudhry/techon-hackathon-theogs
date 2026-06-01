@@ -274,36 +274,50 @@ def detect_drift(text: str) -> dict:
         return _mock_drift(text)
 
 
+def _mock_title(question: str) -> str:
+    """Cheap title from keywords (offline)."""
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z0-9]+", question)
+             if w.lower() not in
+             ("should", "we", "i", "a", "an", "the", "do", "you", "think", "can",
+              "invest", "in", "to", "build", "make", "is", "it", "our", "for", "of",
+              "what", "about", "new")]
+    return (" ".join(words[:3]).title() or "New Idea")
+
+
 def consult(question: str, portfolio: str) -> dict:
     """Advise on a new idea against the existing portfolio, the Affordable-Loss way.
 
-    Returns {suggestion, timeframe_weeks, handmedown}:
-      - suggestion: what to do, grounded in the portfolio, with a concrete next step
+    Returns {title, suggestion, timeframe_weeks, handmedown}:
+      - title: a short 2-4 word name for tracking (e.g. "Digital Camera Investment")
+      - suggestion: descriptive answer that WALKS the portfolio, references specific
+        projects, and says what they can afford to lose, ending with a question
       - timeframe_weeks: when to check back in on progress
       - handmedown: a 1-2 sentence summary the follow-up check-in will read
     """
     if config.LLM_MOCK:
         return {
+            "title": _mock_title(question),
             "suggestion": (
-                "Offline mode. Reasoning from your portfolio: treat this as a small, "
-                "affordable probe, not a big bet. Set aside only what you can lose, run "
-                "the smallest test that gives a real signal, and name who you will talk "
-                "to this week."
+                "Offline mode. Going through your projects: the green ones are funding "
+                "the red ones, so you have room. Treat this as a small affordable probe, "
+                "not a big bet. Risk only what you can lose, run the smallest test that "
+                "gives a real signal, and name who to talk to this week. "
+                "How much could you set aside and be fine losing if it fails?"
             ),
             "timeframe_weeks": 2,
-            "handmedown": "Offline consult: start small, run the smallest test, "
-                          "check back in 2 weeks.",
+            "handmedown": "Offline consult: start small, smallest test, check in 2 weeks.",
         }
     instruction = (
-        "A manager is asking whether to pursue an idea. You have reviewed their "
-        "existing project portfolio (below). Advise them the Affordable-Loss way, "
-        "never ROI:\n"
-        "1) React to the idea in the context of what is already in the portfolio "
-        "(reference real projects by name where relevant).\n"
-        "2) Recommend the smallest affordable first step, not a big commitment.\n"
-        "3) Give a concrete next action and what signal would say keep going vs stop.\n"
-        "4) Pick a sensible timeframe in weeks to check back in on progress.\n"
-        "Respond with ONLY JSON: {\"suggestion\": \"3-5 short sentences\", "
+        "A manager is asking whether to pursue an idea. You have their full project "
+        "portfolio below. Advise the Affordable-Loss way, never ROI.\n"
+        "Write the 'suggestion' as if talking to them: START by saying you went through "
+        "their projects, name the specific ones that matter (by name) and what they tell "
+        "you, then say roughly what they can afford to lose on this idea, recommend the "
+        "smallest first step, and END with one question back to the manager to continue "
+        "the conversation. Be descriptive but plain, 4 to 6 sentences.\n"
+        "Also give a short 'title' of 2 to 4 words to track this by "
+        "(e.g. 'Digital Camera Investment').\n"
+        "Respond with ONLY JSON: {\"title\": \"...\", \"suggestion\": \"...\", "
         "\"timeframe_weeks\": <number>, \"handmedown\": \"1-2 sentence summary a future "
         "check-in can read instead of re-analysing\"}. No ROI, no em dashes.\n\n"
         f"PORTFOLIO:\n{portfolio}\n\nMANAGER'S QUESTION:\n{question}"
@@ -314,10 +328,11 @@ def consult(question: str, portfolio: str) -> dict:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": instruction},
             ],
-            max_tokens=400,
+            max_tokens=500,
         )
         out = _extract_json(raw)
         if out.get("suggestion"):
+            out.setdefault("title", _mock_title(question))
             out.setdefault("timeframe_weeks", 2)
             out.setdefault("handmedown", out["suggestion"][:200])
             return out
@@ -326,11 +341,43 @@ def consult(question: str, portfolio: str) -> dict:
     except Exception:
         pass
     return {
+        "title": _mock_title(question),
         "suggestion": "Treat this as a small affordable probe: risk only what you can "
-                      "lose, run the smallest test, and name who to talk to this week.",
+                      "lose, run the smallest test, and name who to talk to this week. "
+                      "What could you set aside and be fine losing?",
         "timeframe_weeks": 2,
         "handmedown": "Start small, smallest test, check back in 2 weeks.",
     }
+
+
+def consult_followup(history: list[dict], portfolio: str, message: str) -> str:
+    """Continue a consult conversation: the user replied to the opening advice.
+
+    history is a list of {role, text}. Stays in Affordable-Loss framing.
+    """
+    if config.LLM_MOCK:
+        return ("Offline: good question. Keep it to what you can afford to lose, take "
+                "the smallest next step, and we will review at the check-in.")
+    convo = "\n".join(f"{m['role']}: {m['text']}" for m in history)
+    instruction = (
+        "Continue advising this manager about their idea, in Affordable-Loss terms, "
+        "never ROI. Use the portfolio for context and reference real projects if "
+        "relevant. Answer their latest message in 2 to 4 short sentences and, if useful, "
+        "end with a question. No em dashes.\n\n"
+        f"PORTFOLIO:\n{portfolio}\n\nCONVERSATION SO FAR:\n{convo}\n\n"
+        f"MANAGER'S LATEST MESSAGE:\n{message}"
+    )
+    try:
+        return _call(
+            [{"role": "system", "content": SYSTEM_PROMPT},
+             {"role": "user", "content": instruction}],
+            max_tokens=260,
+        ).strip()
+    except BudgetExceeded:
+        raise
+    except Exception:
+        return ("Keep it within what you can afford to lose and take the smallest next "
+                "step; we will check progress at the scheduled time.")
 
 
 def converse(message: str, current: dict, context: str) -> dict:

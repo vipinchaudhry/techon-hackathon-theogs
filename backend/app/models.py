@@ -173,6 +173,7 @@ class Consultation(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    title: Mapped[str] = mapped_column(String(120), default="")
     question: Mapped[str] = mapped_column(Text, default="")
     suggestion: Mapped[str] = mapped_column(Text, default="")
     timeframe_weeks: Mapped[float] = mapped_column(Float, default=2.0)

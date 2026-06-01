@@ -457,6 +457,7 @@ def _consultation_dict(c: Consultation) -> dict:
     return {
         "id": c.id,
         "project_id": c.project_id,
+        "title": c.title,
         "question": c.question,
         "suggestion": c.suggestion,
         "timeframe_weeks": c.timeframe_weeks,
@@ -498,6 +499,7 @@ def consult(body: schemas.ConsultIn, db: Session = Depends(get_db)) -> dict:
     weeks = float(result.get("timeframe_weeks") or 2)
     c = Consultation(
         project_id=body.project_id,
+        title=result.get("title", "")[:120],
         question=body.question,
         suggestion=result.get("suggestion", ""),
         timeframe_weeks=weeks,
@@ -512,6 +514,27 @@ def consult(body: schemas.ConsultIn, db: Session = Depends(get_db)) -> dict:
     c.messages.append(ConsultMessage(role="navigator", text=result.get("suggestion", "")))
     db.commit()
     return {"consultation": _consultation_dict(c), "mock_mode": config.LLM_MOCK}
+
+
+@app.post("/consultations/{cid}/reply")
+def reply_consult(cid: int, body: schemas.CheckInIn, db: Session = Depends(get_db)) -> dict:
+    """Continue the consult conversation: the user replies to the advice and the
+    Navigator answers, still grounded in the portfolio. (Uses `progress` as the
+    message text.)"""
+    c = db.get(Consultation, cid)
+    if not c:
+        raise HTTPException(404, "Consultation not found")
+    message = (body.progress or "").strip()
+    if not message:
+        return {"consultation": _consultation_dict(c)}
+
+    portfolio = _whole_portfolio_snapshot(db)
+    history = [{"role": m.role, "text": m.text} for m in c.messages]
+    answer = llm.consult_followup(history, portfolio, message)
+    c.messages.append(ConsultMessage(role="user", text=message))
+    c.messages.append(ConsultMessage(role="navigator", text=answer))
+    db.commit()
+    return {"reply": answer, "consultation": _consultation_dict(c)}
 
 
 @app.get("/consultations")
@@ -617,7 +640,7 @@ def adopt_consultation(cid: int, body: schemas.AdoptIn, db: Session = Depends(ge
 
     decision = (body.decision or "").strip().lower()
     if decision in ("yes", "adopt", "add"):
-        name = (body.name or c.question or "New project").strip()[:120]
+        name = (body.name or c.title or c.question or "New project").strip()[:120]
         p = Project(
             name=name,
             description=f"Adopted from a consult. {c.handmedown}"[:480],
