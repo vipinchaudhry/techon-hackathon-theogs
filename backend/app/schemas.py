@@ -122,6 +122,8 @@ class AdoptIn(BaseModel):
     decision: str = "no"          # "yes" | "no"
     name: str = ""                # project name if adopting
     budget_eur: float | None = None
+    time_weeks: float | None = None   # how long it runs before check-in
+    team: str = ""                # which team owns it
     reason: str = ""              # why not, if declining
 
 

@@ -124,17 +124,19 @@ def _cache_key(messages: list[dict], max_tokens: int) -> str:
     return f"mt={max_tokens}\n" + "\n".join(parts)
 
 
-def _call(messages: list[dict], max_tokens: int = 500) -> str:
+def _call(messages: list[dict], max_tokens: int = 500, model: str | None = None) -> str:
     """Single OpenRouter chat call, with a GPTCache layer in front.
 
     A repeated prompt is served from cache for ZERO tokens and ZERO cost; the
-    savings are recorded so the cost panel can show them.
+    savings are recorded so the cost panel can show them. `model` overrides the
+    default (used by the advice sessions for a smarter model).
     """
     if config.LLM_MOCK:
         raise RuntimeError("LLM is in mock mode; callers must handle this.")
 
+    model = model or config.LLM_MODEL
     prompt_chars = sum(len(m["content"]) for m in messages)
-    key = _cache_key(messages, max_tokens)
+    key = f"model={model}\n" + _cache_key(messages, max_tokens)
     cache = _get_cache()
 
     # 1) try the cache
@@ -156,7 +158,7 @@ def _call(messages: list[dict], max_tokens: int = 500) -> str:
         )
 
     payload = {
-        "model": config.LLM_MODEL,
+        "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": 0.2,
@@ -307,6 +309,10 @@ def consult(question: str, portfolio: str) -> dict:
             "timeframe_weeks": 2,
             "handmedown": "Offline consult: start small, smallest test, check in 2 weeks.",
         }
+    from . import search
+    web = search.search(question)
+    web_block = f"\n\nRECENT WEB FINDINGS (use if relevant):\n{web}\n" if web else ""
+
     instruction = (
         "A manager is asking whether to pursue an idea. You have their full project "
         "portfolio below. Advise the Affordable-Loss way, never ROI.\n"
@@ -314,13 +320,14 @@ def consult(question: str, portfolio: str) -> dict:
         "their projects, name the specific ones that matter (by name) and what they tell "
         "you, then say roughly what they can afford to lose on this idea, recommend the "
         "smallest first step, and END with one question back to the manager to continue "
-        "the conversation. Be descriptive but plain, 4 to 6 sentences.\n"
+        "the conversation. If web findings are given, weave in one relevant fact. "
+        "Be descriptive but plain, 4 to 6 sentences.\n"
         "Also give a short 'title' of 2 to 4 words to track this by "
         "(e.g. 'Digital Camera Investment').\n"
         "Respond with ONLY JSON: {\"title\": \"...\", \"suggestion\": \"...\", "
         "\"timeframe_weeks\": <number>, \"handmedown\": \"1-2 sentence summary a future "
         "check-in can read instead of re-analysing\"}. No ROI, no em dashes.\n\n"
-        f"PORTFOLIO:\n{portfolio}\n\nMANAGER'S QUESTION:\n{question}"
+        f"PORTFOLIO:\n{portfolio}{web_block}\n\nMANAGER'S QUESTION:\n{question}"
     )
     try:
         raw = _call(
@@ -328,7 +335,8 @@ def consult(question: str, portfolio: str) -> dict:
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": instruction},
             ],
-            max_tokens=500,
+            max_tokens=550,
+            model=config.LLM_SMART_MODEL,
         )
         out = _extract_json(raw)
         if out.get("suggestion"):
@@ -358,20 +366,26 @@ def consult_followup(history: list[dict], portfolio: str, message: str) -> str:
     if config.LLM_MOCK:
         return ("Offline: good question. Keep it to what you can afford to lose, take "
                 "the smallest next step, and we will review at the check-in.")
+    from . import search
+    web = search.search(message)
+    web_block = f"\n\nRECENT WEB FINDINGS (use if relevant):\n{web}\n" if web else ""
+
     convo = "\n".join(f"{m['role']}: {m['text']}" for m in history)
     instruction = (
         "Continue advising this manager about their idea, in Affordable-Loss terms, "
         "never ROI. Use the portfolio for context and reference real projects if "
-        "relevant. Answer their latest message in 2 to 4 short sentences and, if useful, "
-        "end with a question. No em dashes.\n\n"
-        f"PORTFOLIO:\n{portfolio}\n\nCONVERSATION SO FAR:\n{convo}\n\n"
+        "relevant. If web findings are given, weave in one relevant fact. Answer their "
+        "latest message in 2 to 4 short sentences and, if useful, end with a question. "
+        "No em dashes.\n\n"
+        f"PORTFOLIO:\n{portfolio}{web_block}\n\nCONVERSATION SO FAR:\n{convo}\n\n"
         f"MANAGER'S LATEST MESSAGE:\n{message}"
     )
     try:
         return _call(
             [{"role": "system", "content": SYSTEM_PROMPT},
              {"role": "user", "content": instruction}],
-            max_tokens=260,
+            max_tokens=300,
+            model=config.LLM_SMART_MODEL,
         ).strip()
     except BudgetExceeded:
         raise

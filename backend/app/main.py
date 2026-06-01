@@ -661,13 +661,30 @@ def adopt_consultation(cid: int, body: schemas.AdoptIn, db: Session = Depends(ge
     decision = (body.decision or "").strip().lower()
     if decision in ("yes", "adopt", "add"):
         name = (body.name or c.title or c.question or "New project").strip()[:120]
+        weeks = float(body.time_weeks if body.time_weeks is not None else (c.timeframe_weeks or 0))
+        team_name = (body.team or "").strip()
+
+        # Place it under the named team if that team exists under the focus
+        # project; else under the focus project; else top-level.
+        parent_id = c.project_id
+        if team_name and c.project_id:
+            team = db.scalar(
+                select(Project).where(
+                    Project.parent_id == c.project_id,
+                    Project.name == team_name,
+                )
+            )
+            if team:
+                parent_id = team.id
+
         p = Project(
             name=name,
             description=f"Adopted from a consult. {c.handmedown}"[:480],
+            owner=team_name,
             status="Active",
-            parent_id=c.project_id,  # under the focus project, or top-level
+            parent_id=parent_id,
             money_committed=float(body.budget_eur or 0),
-            time_committed_weeks=float(c.timeframe_weeks or 0),
+            time_committed_weeks=weeks,
             pnl_eur=None,  # grey / neutral: no forecast yet
             hypothesis=c.suggestion[:480],
         )
@@ -675,11 +692,17 @@ def adopt_consultation(cid: int, body: schemas.AdoptIn, db: Session = Depends(ge
         db.flush()
         p.audit_entries.append(
             AuditLog(actor="navigator", action="adopted-from-consult",
-                     detail=f"From consult #{c.id}: {c.question}"[:480])
+                     detail=(f"From consult #{c.id}: name={name}, "
+                             f"budget={int(body.budget_eur or 0)}, weeks={weeks:g}, "
+                             f"team={team_name or 'n/a'}")[:480])
         )
         c.adoption = "adopted"
         c.adopted_project_id = p.id
-        note = f"Added '{name}' as a tracked project. I will watch its affordable loss."
+        bits = [f"€{int(body.budget_eur or 0):,}", f"{weeks:g} weeks"]
+        if team_name:
+            bits.append(f"team {team_name}")
+        note = (f"Added '{name}' as a tracked project ({', '.join(bits)}). "
+                "I will watch its affordable loss.")
         c.messages.append(ConsultMessage(role="navigator", text=note))
         db.commit()
         store.export_json(db)

@@ -139,11 +139,8 @@ export default function ProjectPage() {
         <RollupPanel rollup={rollup} children={children} />
       )}
 
-      {/* Consult: ask for advice, get a suggestion + a scheduled check-in */}
-      <ConsultPanel projectId={id} />
-
-      {/* Ask the AI, with portfolio context */}
-      <AskPanel projectId={id} onApplied={load} />
+      {/* Advice sessions: the one chat — ask, get advice, check in, adopt */}
+      <ConsultPanel projectId={id} onChanged={load} />
 
       {/* History */}
       <div className="card" style={{ marginTop: 16 }}>
@@ -583,7 +580,7 @@ function RollupPanel({ rollup, children }) {
   );
 }
 
-function ConsultPanel({ projectId }) {
+function ConsultPanel({ projectId, onChanged }) {
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
   const [consults, setConsults] = useState([]);
@@ -597,6 +594,7 @@ function ConsultPanel({ projectId }) {
       if (selectId !== undefined) setActiveId(selectId);
       else if (activeId === null && mine.length) setActiveId(mine[0].id);
     } catch {}
+    if (onChanged) onChanged(); // refresh graph/portfolio after adopt etc.
   }
   useEffect(() => { load(); }, [projectId]);
 
@@ -780,15 +778,25 @@ function CheckInRow({ consult, onDone }) {
 }
 
 function AdoptRow({ consult, onDone }) {
-  const [mode, setMode] = useState(null); // null | "decline"
-  const [name, setName] = useState(consult.question.slice(0, 60));
+  const [mode, setMode] = useState(null); // null | "form" | "decline"
+  const [name, setName] = useState(consult.title || consult.question.slice(0, 60));
+  const [budget, setBudget] = useState("");
+  const [weeks, setWeeks] = useState(String(Math.round(consult.timeframe_weeks || 2)));
+  const [team, setTeam] = useState("");
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function adopt() {
+    if (!name.trim()) return;
     setBusy(true);
     try {
-      await api.adoptConsult(consult.id, { decision: "yes", name });
+      await api.adoptConsult(consult.id, {
+        decision: "yes",
+        name: name.trim(),
+        budget_eur: Number(budget) || 0,
+        time_weeks: Number(weeks) || 0,
+        team: team.trim(),
+      });
       if (onDone) onDone();
     } finally { setBusy(false); }
   }
@@ -802,7 +810,7 @@ function AdoptRow({ consult, onDone }) {
 
   if (mode === "decline") {
     return (
-      <div className="row">
+      <div className="row" style={{ marginTop: 8 }}>
         <input
           value={reason}
           onChange={(e) => setReason(e.target.value)}
@@ -813,97 +821,40 @@ function AdoptRow({ consult, onDone }) {
       </div>
     );
   }
-  return (
-    <div>
-      <div className="row" style={{ marginBottom: 6 }}>
-        <input value={name} onChange={(e) => setName(e.target.value)}
-          placeholder="Project name to track" />
-      </div>
-      <div className="row">
-        <button onClick={adopt} disabled={busy}>{busy ? "..." : "Yes, track it"}</button>
-        <button className="secondary" onClick={() => setMode("decline")}>No</button>
-      </div>
-    </div>
-  );
-}
 
-function AskPanel({ projectId, onApplied }) {
-  const [log, setLog] = useState([]);
-  const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  // Load the saved conversation when the panel mounts (survives refresh/navigation).
-  useEffect(() => {
-    let alive = true;
-    api
-      .chatHistory(Number(projectId))
-      .then((msgs) => {
-        if (alive) setLog(msgs.map((m) => ({ who: m.role, text: m.text })));
-      })
-      .catch(() => {})
-      .finally(() => alive && setLoaded(true));
-    return () => {
-      alive = false;
-    };
-  }, [projectId]);
-
-  async function send() {
-    if (!text.trim()) return;
-    const msg = text.trim();
-    setLog((l) => [...l, { who: "user", text: msg }]);
-    setText("");
-    setBusy(true);
-    try {
-      const res = await api.ask(msg, Number(projectId));
-      setLog((l) => [...l, { who: "bot", text: res.answer || "(no change)" }]);
-      // If the navigator changed a parameter, refresh the page so the loss
-      // profile, graph, and outcome reflect the new data.
-      if (res.applied_fields && Object.keys(res.applied_fields).length && onApplied) {
-        onApplied();
-      }
-    } catch (e) {
-      setLog((l) => [...l, { who: "bot", text: "Error: " + e.message }]);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function clear() {
-    await api.clearChat(Number(projectId)).catch(() => {});
-    setLog([]);
-  }
-
-  return (
-    <div className="card" style={{ marginTop: 16 }}>
-      <div className="spread" style={{ marginBottom: 6 }}>
-        <div className="row">
-          <div className="chip coral"><IconTarget /></div>
-          <h3 style={{ margin: 0 }}>Navigator</h3>
+  if (mode === "form") {
+    return (
+      <div style={{ marginTop: 8 }}>
+        <p className="small muted" style={{ margin: "0 0 6px" }}>
+          Before I track it, confirm the details:
+        </p>
+        <div className="row" style={{ marginBottom: 6 }}>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name" />
         </div>
-        {log.length > 0 && (
-          <button className="secondary" onClick={clear}>Clear history</button>
-        )}
+        <div className="row" style={{ marginBottom: 6 }}>
+          <input value={budget} onChange={(e) => setBudget(e.target.value)}
+            placeholder="Budget you can afford to lose (EUR)" inputMode="numeric" />
+          <input value={weeks} onChange={(e) => setWeeks(e.target.value)}
+            placeholder="Weeks" inputMode="numeric" style={{ maxWidth: 90 }} />
+        </div>
+        <div className="row" style={{ marginBottom: 6 }}>
+          <input value={team} onChange={(e) => setTeam(e.target.value)}
+            placeholder="Team that owns it (optional)" />
+        </div>
+        <div className="row">
+          <button onClick={adopt} disabled={busy || !name.trim()}>
+            {busy ? "Adding..." : "Add to portfolio"}
+          </button>
+          <button className="secondary" onClick={() => setMode(null)}>Back</button>
+        </div>
       </div>
-      <p className="small muted">
-        Adjust the project or ask for a read. Try "the budget went down by 20k" or
-        "which losing projects can we keep?" Changes are saved.
-      </p>
-      <div className="chat-log">
-        {loaded && log.length === 0 && (
-          <p className="small muted" style={{ margin: "4px 0" }}>No messages yet.</p>
-        )}
-        {log.map((m, i) => <div key={i} className={`bubble ${m.who}`}>{m.text}</div>)}
-      </div>
-      <div className="row">
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-          placeholder="Adjust a parameter or ask a question..."
-        />
-        <button onClick={send} disabled={busy}>{busy ? "..." : "Send"}</button>
-      </div>
+    );
+  }
+
+  return (
+    <div className="row" style={{ marginTop: 8 }}>
+      <button onClick={() => setMode("form")}>Track this project</button>
+      <button className="secondary" onClick={() => setMode("decline")}>No, not now</button>
     </div>
   );
 }

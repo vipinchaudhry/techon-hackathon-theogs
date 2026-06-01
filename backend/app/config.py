@@ -74,6 +74,14 @@ OPENROUTER_BASE_URL = os.getenv(
 # Override by setting LLM_MODEL in the environment or backend/.env.
 LLM_MODEL = os.getenv("LLM_MODEL", "google/gemini-2.0-flash-lite-001")
 
+# A smarter model for the advice sessions (consult/follow-up), where quality
+# matters most. Falls back to LLM_MODEL if not set.
+LLM_SMART_MODEL = os.getenv("LLM_SMART_MODEL", "openai/gpt-4o-mini")
+
+# Optional web search. If a Tavily key is present (env or api.md), the advice
+# sessions can search the internet; otherwise they reason from the portfolio.
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY") or _read_token_from_api_md("tvly-")
+
 # Force mock mode (no network, no spend) even if a key exists: set LLM_MOCK=1.
 # If there is no key at all, we are always in mock mode.
 LLM_MOCK = os.getenv("LLM_MOCK") == "1" or OPENROUTER_API_KEY is None
