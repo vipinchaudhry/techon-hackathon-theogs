@@ -32,19 +32,22 @@ def get(name_like):
                                            Project.parent_id.is_(None)))
 
 # ---------------------------------------------------------------- KODAK --------
-# Actual: asked ROI, buried the camera -> bankruptcy.
-# Tool should show this is an AFFORDABLE bet (low overall risk, no re-commitment
-# block), i.e. keep it, not kill it.
+# Actual: judged each project on ROI, the digital bets lose money -> buried them
+# -> bankruptcy. Seen as a PORTFOLIO, the red digital bets are small and
+# affordable next to the green film profits, so they are bets to keep.
 kodak = get("Kodak")
-ks = status_engine.evaluate(kodak)
-check("kodak: it is a single focused project (no sub-projects)",
-      db.scalar(select(Project).where(Project.parent_id == kodak.id)) is None)
-check("kodak: overall risk is affordable (Low or Medium), not Critical",
-      ks["overall_tier"] in ("Low", "Medium"), f"overall={ks['overall_tier']}")
-check("kodak: tool does NOT demand stop / re-commitment (keep the bet)",
-      ks["recommit_required"] is False)
-check("kodak: tool gives a concrete next step (who to talk to)",
-      bool(kodak.contact_person) and bool(kodak.smallest_test))
+kodak_kids = list(db.scalars(select(Project).where(Project.parent_id == kodak.id)).all())
+check("kodak: it is a portfolio of bets (sub-projects)", len(kodak_kids) >= 3,
+      f"n={len(kodak_kids)}")
+greens = [c for c in kodak_kids if (c.pnl_eur or 0) > 0]
+reds = [c for c in kodak_kids if (c.pnl_eur or 0) < 0]
+check("kodak: has both money-makers and money-losers",
+      len(greens) > 0 and len(reds) > 0, f"green={len(greens)} red={len(reds)}")
+check("kodak: green profits dwarf the red losses (the losses are affordable)",
+      sum(c.pnl_eur for c in greens) > abs(sum(c.pnl_eur for c in reds)),
+      f"green=+{int(sum(c.pnl_eur for c in greens)):,} red={int(sum(c.pnl_eur for c in reds)):,}")
+check("kodak: each red digital bet alone is survivable, not Critical",
+      all(status_engine.overall_tier(c) != "Critical" for c in reds))
 
 # --------------------------------------------------------------- GOOGLE --------
 # Actual: no single project looked bad -> silent erosion -> program died.

@@ -134,8 +134,8 @@ export default function ProjectPage() {
         <StakeholderPanel projectId={id} stakeholders={project.stakeholders} asView={asView} setAsView={setAsView} />
       )}
 
-      {/* Google-style rollup (only for non profit/loss portfolios) */}
-      {isPortfolio && rollup && project.name.startsWith("Google") && (
+      {/* Portfolio rollup: show for any project that has sub-projects */}
+      {isPortfolio && rollup && (
         <RollupPanel rollup={rollup} children={children} />
       )}
 

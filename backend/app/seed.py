@@ -26,36 +26,86 @@ def _audit(project: Project, action: str, detail: str, actor: str = "system", da
 
 
 def seed_kodak(db: Session) -> Project:
-    """Kodak: a single decision. Reframe ROI into Affordable Loss and produce a
-    concrete first step. No sub-projects, this is the one bet to focus on."""
-    k = Project(
-        name="Kodak — Filmless (Digital) Camera",
+    """Kodak as a project portfolio: one program with project nodes.
+
+    Each node carries a profit/loss number. Green = in profit, red = in loss.
+    This is the manager view: see the whole portfolio at a glance as a graph,
+    and decide which bets are affordable, not which have the best ROI.
+    """
+    program = Project(
+        name="Kodak Portfolio",
         description=(
-            "Steven Sasson's prototype digital camera. Executives keep asking what the "
-            "expected return is and how much revenue a filmless camera would bring, "
-            "which makes it look like a way to destroy the film business."
+            "Kodak's bets across film and digital. Each node is a project. Green nodes "
+            "make money, red nodes lose it. The question is not ROI, it is which bets "
+            "we can afford to lose while we find out if digital is real."
         ),
-        owner="Steven Sasson",
+        owner="Kodak Leadership",
         status="Active",
         uncertainty_type="Market",
-        money_committed=50_000,
-        money_spent=5_000,
-        time_committed_weeks=12,
-        time_spent_weeks=2,
+        money_committed=3_000_000,
+        money_spent=2_320_000,
+        time_committed_weeks=1_200,
+        time_spent_weeks=900,
         reputation_tier="Medium",
         relationships_tier="Low",
         reversibility_tier="Low",
-        hypothesis="A small group of photographers would value instant, filmless images enough to pay.",
-        smallest_test="Show the prototype to 5 pro photographers and 2 retail buyers.",
-        contact_person="A pro wedding photographer and one camera-store buyer",
-        contact_question="If this were filmless, what would make it useful enough to switch?",
-        signal_keep="At least 3 of 7 ask to try it on a real job.",
-        signal_stop="All 7 say film quality is non-negotiable for years.",
+        hypothesis="A balanced portfolio funds digital exploration from film profits.",
+        smallest_test="Track each project's profit/loss and affordable loss monthly.",
+        contact_person="Each project owner",
+        contact_question="Is this project still within what we can afford to lose?",
+        signal_keep="Film profits cover the digital bets we choose to keep.",
+        signal_stop="Loss-making bets exceed what the portfolio can absorb.",
         reevaluation_date=date.today() + timedelta(days=21),
     )
-    _audit(k, "created", "Seeded Kodak digital camera case.", days_ago=3)
-    db.add(k)
-    return k
+    db.add(program)
+    db.flush()
+
+    # (name, pnl_eur, money_committed, money_spent, weeks_committed, weeks_spent,
+    #  reputation, uncertainty, status)
+    nodes = [
+        ("Color Film (consumer)", 1_400_000, 200_000, 180_000, 60, 58, "Low", "Market", "Active"),
+        ("Film Processing Labs", 820_000, 150_000, 140_000, 80, 78, "Low", "Resource", "Active"),
+        ("Photo Paper", 360_000, 90_000, 85_000, 50, 48, "Low", "Market", "Active"),
+        ("Single-Use Cameras", 240_000, 70_000, 60_000, 40, 35, "Low", "Market", "Active"),
+        ("Digital Camera (Sasson)", -180_000, 50_000, 48_000, 12, 11, "Medium", "Market", "Active"),
+        ("DSLR Prototype", -260_000, 120_000, 118_000, 90, 88, "High", "Technology", "Active"),
+        ("Inkjet Printers", -140_000, 110_000, 90_000, 60, 40, "Medium", "Technology", "Active"),
+        ("Online Photo Sharing", -90_000, 80_000, 60_000, 30, 22, "Medium", "Market", "Active"),
+        ("Kiosk Printing", 60_000, 40_000, 30_000, 25, 20, "Low", "Resource", "Active"),
+        ("Chemicals Division", 510_000, 130_000, 120_000, 70, 68, "Low", "Resource", "Active"),
+    ]
+    for (name, pnl, mc, ms, tc, ts, rep, unc, st) in nodes:
+        losing = pnl < 0
+        child = Project(
+            name=name,
+            description=(
+                f"{name}: currently {'losing' if losing else 'making'} money "
+                f"(EUR {pnl:,}). Part of the Kodak portfolio."
+            ),
+            owner="Project owner",
+            status=st,
+            parent_id=program.id,
+            uncertainty_type=unc,
+            money_committed=mc,
+            money_spent=ms,
+            time_committed_weeks=tc,
+            time_spent_weeks=ts,
+            reputation_tier=rep,
+            relationships_tier="Low",
+            reversibility_tier="Medium" if losing else "Low",
+            pnl_eur=pnl,
+            hypothesis=f"{name} earns its place in the portfolio.",
+            smallest_test="Review this quarter's profit/loss against its affordable loss.",
+            contact_person="Project owner",
+            contact_question="What would tell us to double down or stop?",
+            signal_keep="Profit holds or the loss stays within what we can absorb.",
+            signal_stop="Loss grows past the affordable boundary.",
+            reevaluation_date=date.today() + timedelta(days=14),
+        )
+        db.add(child)
+
+    _audit(program, "created", "Seeded Kodak portfolio with 10 project nodes.", days_ago=3)
+    return program
 
 
 def seed_google(db: Session) -> Project:
@@ -215,11 +265,11 @@ def seed_all(db: Session, force: bool = False) -> None:
 # tool's affordable-loss answer is generated live and merged in by the endpoint.
 CASE_OUTCOMES = {
     "kodak": {
-        "project_name": "Kodak — Filmless (Digital) Camera",
-        "wrong_question": "What is the expected return on a filmless camera?",
-        "actual_decision": "Buried the prototype to avoid cannibalizing film revenue.",
+        "project_name": "Kodak Portfolio",
+        "wrong_question": "What is the expected return on each project?",
+        "actual_decision": "Judged the digital bets on ROI, found them money-losing, and buried them to protect film.",
         "cost": "Filed for bankruptcy in 2012 after missing the digital shift it invented.",
-        "averted": "Reframed as a 50k, 12-week probe to learn if digital is real, the camera is an affordable bet to keep, not a threat to kill.",
+        "averted": "Seen as a portfolio, the red digital bets are small and affordable next to the green film profits, so they are bets to keep, not losers to cut.",
     },
     "google": {
         "project_name": "Google — 20% Time Program",
@@ -240,19 +290,19 @@ CASE_OUTCOMES = {
 
 SCENARIOS = {
     "kodak": {
-        "title": "Kodak: Reframe the room",
-        "project_name": "Kodak — Filmless (Digital) Camera",
+        "title": "Kodak: See the whole portfolio",
+        "project_name": "Kodak Portfolio",
         "steps": [
+            {"title": "Ten bets on one map",
+             "narration": "Kodak ran many projects at once. Green nodes make money, red ones lose it. The digital bets, like the Sasson camera, are the red nodes."},
             {"title": "The wrong question",
-             "narration": "Executives ask: what is the expected return on a filmless camera? Against that question it looks like a way to destroy the film business. So they bury it."},
+             "narration": "Executives judged each project on expected return. The red digital bets lose money, so on ROI alone they look like obvious cuts."},
             {"title": "The Navigator reframes",
-             "narration": "The tool replaces the ROI question with: what is the smallest amount we could put on the table to find out if digital is real, while staying genuinely fine if it fails?"},
-            {"title": "What is at stake",
-             "narration": "Money: 50k we can absorb. Time: 12 weeks. Reputation: Medium. Nothing here threatens the film business. The bet-the-company framing was an illusion."},
+             "narration": "The real question is not ROI, it is affordable loss. Next to the huge green film profits, the red digital bets are small. We can easily afford to keep them while we learn if digital is real."},
             {"title": "A concrete next step",
-             "narration": "Not 'run an experiment.' Instead: show the prototype to 5 pro photographers and 2 retail buyers this month, and ask one specific question. Keep going if 3 of 7 want to try it on a real job."},
-            {"title": "Would it have changed 1976?",
-             "narration": "Yes. The decision stops being 'launch vs protect film' and becomes 'spend 50k to learn.' That is a decision executives can say yes to."},
+             "narration": "Keep the affordable red bets funded from film profits. Put the smallest test on each: who do we talk to, what signal says double down, what says stop."},
+            {"title": "Would it have changed the outcome?",
+             "narration": "Yes. The decision stops being 'cut the money-losers' and becomes 'fund the future from the present.' That is the bet Kodak refused, and it sank them."},
         ],
     },
     "google": {

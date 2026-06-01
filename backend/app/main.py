@@ -575,23 +575,8 @@ def case_outcome(key: str, db: Session = Depends(get_db)) -> dict:
         "overall_tier": status["overall_tier"],
     }
 
-    if key == "kodak":
-        tool["verdict"] = status_engine.single_verdict(proj, status)
-        tool["next_step"] = (
-            f"Talk to {proj.contact_person}. Ask: {proj.contact_question} "
-            f"Keep going if {proj.signal_keep}"
-        )
-        facts = (
-            f"Project: {proj.name}. Money we can absorb: EUR {int(proj.money_committed):,}. "
-            f"Money already spent: EUR {int(proj.money_spent):,}. "
-            f"Time boundary: {proj.time_committed_weeks:g} weeks. "
-            f"Overall risk: {status['overall_tier']}. "
-            f"Re-commitment required: {status['recommit_required']}. "
-            f"Smallest test: {proj.smallest_test}"
-        )
-        tool["reframe"] = llm.reframe_case(meta["wrong_question"], facts)
-
-    elif key == "google":
+    if key in ("kodak", "google"):
+        # Both are portfolios: roll the sub-projects up to the program boundary.
         verdict, roll = status_engine.portfolio_verdict(proj, children)
         tool["verdict"] = verdict
         tool["boundary_breached"] = roll["boundary_breached"]

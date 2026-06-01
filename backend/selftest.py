@@ -20,19 +20,18 @@ results = []
 def check(name, cond):
     results.append(f"{'PASS' if cond else 'FAIL'}:{name}")
 
-allp = db.scalars(select(Project)).all()
 tops = db.scalars(select(Project).where(Project.parent_id.is_(None))).all()
-check("total10", len(allp) == 10)
 check("tops3", len(tops) == 3)
 
-kodak = db.scalar(select(Project).where(Project.name.like("Kodak%")))
+kodak = db.scalar(select(Project).where(Project.name.like("Kodak%"), Project.parent_id.is_(None)))
 google = db.scalar(select(Project).where(Project.name.like("Google%"), Project.parent_id.is_(None)))
 sony = db.scalar(select(Project).where(Project.name.like("Sony%"), Project.parent_id.is_(None)))
 
-ks = status_engine.evaluate(kodak)
-check("kodak_overall_le_med", ks["overall_tier"] in ("Low", "Medium"))
-check("kodak_no_recommit", ks["recommit_required"] is False)
-check("kodak_has_contact", bool(kodak.contact_person))
+# Kodak is now a portfolio (like Google): a parent with profit/loss sub-projects.
+kodak_kids = db.scalars(select(Project).where(Project.parent_id == kodak.id)).all()
+check("kodak_is_portfolio", len(kodak_kids) == 10)
+check("kodak_has_red_and_green",
+      any((c.pnl_eur or 0) < 0 for c in kodak_kids) and any((c.pnl_eur or 0) > 0 for c in kodak_kids))
 
 ss = status_engine.evaluate(sony)
 check("sony_overall_high", ss["overall_tier"] == "High")
